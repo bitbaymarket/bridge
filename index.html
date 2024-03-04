@@ -1958,11 +1958,11 @@ async function registerBitBay(regaddy) {
         return;
     }
     lastrun = (Math.floor(Date.now() / 1000)) + 7;
-    if(regaddy[0] != 'b' && regaddy[0] != "B") {
+    //if(regaddy[0] != 'b' && regaddy[0] != "B") {
         //document.getElementById("text1").innerHTML += "<br><br>Invalid BitBay address.";
-        modalDialog('Connect', "Invalid BitBay address.", "danger");
-        return;
-    }
+    //    modalDialog('Connect', "Invalid BitBay address.", "danger");
+    //    return;
+    //}
     if(coinjs.addressDecode(regaddy) == false) {
         //document.getElementById("text1").innerHTML += "<br><br>Invalid BitBay address.";
         modalDialog('Connect', "Invalid BitBay address.", "danger");
