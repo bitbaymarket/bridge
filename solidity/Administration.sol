@@ -45,7 +45,7 @@ contract Administration is IAdministration {
     mapping (uint => address[]) public addresses; //Useful cross reference
     mapping (uint => uint) public processingTime;
     uint public nonce;
-    uint public intervaltime = 43200; //12 hour batches of transactions. And stakers can wait a few hours to finalize data.
+    uint public intervaltime = 3600; //1 hour batches of transactions. And stakers can wait a few hours to finalize data.
     uint public timeLimit = 15552000; //Curators should be encouraged to stay active
     
     uint public isActive = 1; //Initially proxies may be immediately changed
