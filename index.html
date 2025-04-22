@@ -1611,7 +1611,7 @@ async function checkbalances() {
 
 async function getNetworkInfo() {
     await baydatacontract.methods.getState().call().then(function (netvars) {
-        networkvars = DOMPurify.sanitize(netvars);
+        networkvars = JSON.parse(DOMPurify.sanitize(JSON.stringify(netvars)));
     })
     document.getElementById("networkinfo").innerHTML = DOMPurify.sanitize("Current Total Network Supply: " + calculateSupply(networkvars[0],networkvars[4],networkvars[3]) + "% (" + networkvars[0] + " / " + (networkvars[1] * networkvars[2]) + ")<br>Peg compression(steps, microsteps): " + networkvars[1] + ", "+ networkvars[2] + "<br>Deflation rate and compound rate: (" + networkvars[4] + "% ^ " + (100 - networkvars[3]) + ")<br>Three way factor to BitBay's 1200 possible supplies: (" + networkvars[1] + " * " + networkvars[2] + " * " + (100 - networkvars[3]) + ")<br>Time delay for reserve payments(in seconds): " + reservetimelock);
 }
@@ -1706,7 +1706,7 @@ async function getMarketData(calcbal = 0) {
         var LPtokensPair;
         var paircontract = new web3.eth.Contract(PairABI, mycurrentpair);
         await paircontract.methods.getReserves().call().then(function (result3) {
-            reserves = DOMPurify.sanitize(result3);
+            reserves = JSON.parse(DOMPurify.sanitize(JSON.stringify(result3)));
         });
         await paircontract.methods.token0().call().then(function (result3) {
             token0 = DOMPurify.sanitize(result3);
@@ -1761,7 +1761,7 @@ async function getMarketData(calcbal = 0) {
                     }
                 } else {
                     await liquiditypool.methods.calculatePoolBalanceV1(myaccounts, mycurrentpair, 0, LPtokens2, precision, 0).call().then(function (result3) {
-                      result3 = DOMPurify.sanitize(result3);
+                      result3 = JSON.parse(DOMPurify.sanitize(JSON.stringify(result3)));
                       reserveatpool = result3[1];
                     });
                     var section = parseInt(Math.floor(networkvars[0] / networkvars[2]));
@@ -1873,7 +1873,7 @@ async function calculateDeposit() {
                 if(/^0x0+$/.test(mypair) == false) {
                     console.log("Checking pool balance...");
                     await liquiditypool.methods.calculateBalance(myaccounts,mypair,true,0).call().then(function (thisresult) {
-                        thisresult = DOMPurify.sanitize(thisresult);
+                        thisresult = JSON.parse(DOMPurify.sanitize(JSON.stringify(thisresult)));
                         poolreserve[0] = thisresult[0];
                         poolreserve[1] = thisresult[1];
                     })
@@ -1881,7 +1881,7 @@ async function calculateDeposit() {
                     reserves = [];
                     paircontract = new web3.eth.Contract(PairABI, mypair);
                     await paircontract.methods.getReserves().call().then(function (thisresult) {
-                        reserves = DOMPurify.sanitize(thisresult);
+                        reserves = JSON.parse(DOMPurify.sanitize(JSON.stringify(thisresult)));
                     });
                     await paircontract.methods.token0().call().then(function (thisresult) {
                         token0 = DOMPurify.sanitize(thisresult);
@@ -2227,7 +2227,7 @@ async function showFrozen() {
     var result = [];
     var result2 = [];
     await baydatacontract.methods.getFrozen(myaccounts).call().then(function (myresult) {
-        result = DOMPurify.sanitize(myresult);
+        result = JSON.parse(DOMPurify.sanitize(JSON.strinify(myresult)));
     })
     var result2 = networkvars;
     var x = 0;
@@ -2554,7 +2554,7 @@ async function showNonces() {
     var returnthis = 0;
     var currentaccount = myaccounts;
     await bayadmincontract.methods.listNonces(currentaccount).call().then(function (myresults) {
-        myresults = DOMPurify.sanitize(myresults);
+        myresults = JSON.parse(DOMPurify.sanitize(JSON.stringify(myresults)));
         if(myresults.length == 0) {
             document.getElementById("merkletext").innerHTML = 'No history of burned funds to BitBay network from this account.';
             returnthis = 1;
@@ -2582,7 +2582,7 @@ async function showNonces() {
         jsonreceipt['address'] = DOMPurify.sanitize(myresults);
     });
     await bayadmincontract.methods.showReserve(currentaccount, item).call().then(function (myresults) {
-        jsonreceipt['reserve'] = DOMPurify.sanitize(myresults);
+        jsonreceipt['reserve'] = JSON.parse(DOMPurify.sanitize(JSON.stringify(myresults)));
     });
     await bayadmincontract.methods.highkey(item, currentaccount).call().then(function (myresults) {
         jsonreceipt['section'] = DOMPurify.sanitize(myresults);
@@ -2608,7 +2608,7 @@ async function showNonces() {
         document.getElementById("merkletext").innerHTML += "<br>Merkle Proof: Merkle tree ready, you may copy the receipt to the clipboard.";
         var leaves = [];
         await bayadmincontract.methods.listHashes(item).call().then(function (myresults) {
-            leaves = DOMPurify.sanitize(myresults);
+            leaves = JSON.parse(DOMPurify.sanitize(JSON.stringify(myresults)));
         });
         var tree = new MerkleTree(leaves, web3.utils.keccak256, { sort: true });
         var root = tree.getRoot().toString('hex');
