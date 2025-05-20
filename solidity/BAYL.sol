@@ -21,7 +21,6 @@ contract BAYL is IHALO {
     uint public decimals = 8;
     bool public showCirculating = false;
     
-    // Events allow clients to react to specific contract changes you declare
     event Approval(address indexed from, address indexed to, uint amount);
     event Transfer(address indexed from, address indexed to, uint amount);
     
@@ -106,21 +105,6 @@ contract BAYL is IHALO {
             return false;
         }
         if(checked[verify] == 3) {
-            (success, result) = proxy.staticcall(abi.encodeWithSignature("isRouter(address)",verify));
-            require(success);
-            isRouter = abi.decode(result, (bool));
-            if(isRouter) {
-                (success, result) = proxy.staticcall(abi.encodeWithSignature("getState()"));
-                require(success);
-                (uint supply,,uint mk,,) = abi.decode(result, (uint,uint,uint,uint,uint));
-                (success, result) = LiquidityPool.staticcall(abi.encodeWithSignature("poolhighkey()"));
-                require(success);
-                uint highkey = abi.decode(result, (uint));
-                if(highkey != (supply / mk)) {
-                    (success, result) = LiquidityPool.call(abi.encodeWithSignature("syncAMM(address)",verify));
-                    require(success);
-                }
-            }
             return true;
         }
         if(checkSync) {
