@@ -75,7 +75,7 @@ contract Administration is IAdministration {
     constructor() {
         nonce = startingNonce;
         minter = msg.sender;
-        mintmode = 1;
+        mintmode = 0;
         totalSupply = 1e17;
         myweight[msg.sender] = 100;
         isCurator[msg.sender] = true;
@@ -88,7 +88,7 @@ contract Administration is IAdministration {
             x += 1;
         }
         maxweight = 100000;
-        delayTime = 7257600; //3 month delay for major proxy changes
+        delayTime = 3888000; //45 day delay for major proxy changes
     }
 
     //Solidity limits the number of variables to a function so a struct is used here

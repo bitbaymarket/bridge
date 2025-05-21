@@ -91,7 +91,7 @@ contract BAYL is IHALO {
     //This check is to see if a user is sending to an unknown contract without knowing the nature of the peg and its    
     //effect on pools and transactions. They will get denied if they attempt to send this way. This method does not prevent
     //them from sending before the contract exists. If they must interact with contracts they should use the base contract.
-    function checkAddress(address verify, bool checkSync) public returns (bool) {
+    function checkAddress(address verify) public returns (bool) {
         bool isRouter;
         bool success;
         bytes memory result;
@@ -102,12 +102,6 @@ contract BAYL is IHALO {
             return true;
         }
         if(checked[verify] == 2) {
-            return false;
-        }
-        if(checked[verify] == 3) {
-            return true;
-        }
-        if(checkSync) {
             return true;
         }
         if(verify == LiquidityPool || verify == minter) {
@@ -118,7 +112,7 @@ contract BAYL is IHALO {
         require(success);
         bool isAMM = abi.decode(result, (bool));
         if(isAMM == true) {
-            checked[verify] = 3;
+            checked[verify] = 2;
             return true;
         } else {
             (success, result) = proxy.staticcall(abi.encodeWithSignature("minter()"));
@@ -137,7 +131,6 @@ contract BAYL is IHALO {
                 }
             }
         }
-        checked[verify] = 2;
         return false;
     }
 
@@ -189,8 +182,7 @@ contract BAYL is IHALO {
             lockpair = address(0);
             return true;
         }
-        require(checkAddress(msg.sender, true));
-        require(checkAddress(to, false));
+        require(checkAddress(to));
         bool success;
         bytes memory result;
         (success, result) = proxy.call(abi.encodeWithSignature("sendLiquid(address,address,uint256,address)",msg.sender,to,value,msg.sender));
@@ -204,8 +196,7 @@ contract BAYL is IHALO {
             lockpair = address(0);
             return true;
         }
-        require(checkAddress(from, true));
-        require(checkAddress(to, false));
+        require(checkAddress(to));
         bool success;
         bytes memory result;
         (success, result) = proxy.call(abi.encodeWithSignature("sendLiquid(address,address,uint256,address)",from,to,value,msg.sender));

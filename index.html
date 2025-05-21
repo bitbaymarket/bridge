@@ -1691,6 +1691,21 @@ async function checkbalances() {
         deflationrate = 99;
         compoundrate = 5;
         reservetimelock = 600; //Testnet is 10 minutes
+    }
+    if (currentChainId == "137") {
+        netname = "Polygon";
+        netname2 = "POL";
+        BAYLaddy = "0x05aB92a131A489e23bE8eBA829F3986D72af6A2E";
+        BAYRaddy = "0x8Ec52157Eb32aA9cb88a0a503aaac3641291d419";
+        BAYFaddy = "0x26948f011942B539897f98f99288C340291993c2";
+        BAYDataAddy = "0xA9BF89b0c130Fc8FA9838d923f81d51325909045";
+        BAYAdmin = "0xf98eA1C9841cD1B4433cE3a1f0ad2BEa3406af7E";
+        liquidityAddy = "0x88FBe58291B78C90c361cdc1D1f5dD13b252e5e2";
+        pegsteps = 30;
+        microsteps = 8;
+        deflationrate = 99;
+        compoundrate = 5;
+        reservetimelock = 2592000; //One month
     }    
     if (netname == "unknown") {
         //document.getElementById("text1").innerHTML = "Unsupported network";
@@ -1788,6 +1803,16 @@ async function getMarketData(calcbal = 0) {
             exchangeImages.push('<img src="./walrus.png" style="height: 75px; width: 75px;"/>');
             routers.push({'UniversalRouter': '0xfe8f06a4435551c1ab93af0B12D12f4873114a09'});
         }
+        if (currentChainId == "137") {
+            pairs.push({'Wrapped ETH': '0x7ceb23fd6bc0add59e62ac25578270cff1b9f619'});
+            pairs.push({'DAI': '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063'});
+            knowndecimals.push(18);
+            knowndecimals.push(18);
+            exchanges.push({'UniSwap': '0x9e5A52f57b3038F1B8EeE45F28b3C1967e22799C'});
+            exchangenum.push(997)
+            exchangeImages.push('<img src="./uniswap.png" style="height: 75px; width: 75px;"/>');
+            routers.push({'UniversalRouter': '0x794b0ECfA7ef2ed574a4a2eeba44824926f3ea29'});
+        }        
         document.getElementById("exchangeImage").innerHTML="";
         document.getElementById("Coin1").innerHTML="";
         document.getElementById("exchangeSelect").innerHTML="";
