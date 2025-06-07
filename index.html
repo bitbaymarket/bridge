@@ -1,6 +1,6 @@
+<!-- Coinleft Public License for BitBay -->
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0">
@@ -10,10 +10,26 @@
   <link rel="stylesheet" href="./assets/css/nouislider.min.css">
   <!-- <link rel="stylesheet" href="./assets/css/line.css"> -->
   <link rel="stylesheet" href="./assets/css/style.css">
+  <script>
+    (function() {
+      var isDark = localStorage.getItem("darkTheme");
+      if (isDark === "true") {
+        document.documentElement.style.filter = 'invert(1) hue-rotate(180deg)';
+        var media = ['img', 'video', 'iframe', 'canvas', 'picture', 'svg'];
+        var observer = new MutationObserver(() => {
+          media.forEach(tag => {
+            Array.prototype.forEach.call(document.getElementsByTagName(tag), el => {
+              el.style.filter = 'invert(1) hue-rotate(180deg)';
+            });
+          });
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+      }
+    })();
+  </script>
 </head>
 
 <body>
-
   <div class="wrap" id="wrap">
   <!-- top menu -->
    
