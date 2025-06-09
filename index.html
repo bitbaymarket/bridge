@@ -1879,7 +1879,7 @@ async function checkbalances() {
         }
     })
     //await bayadmincontract.methods.isActive().call().then(function (isActive) { //May also check if automatic unfreeze and special transactions are enabled
-    //    if(parseInt(DOMPurify.sanitize(isActive)) > 1) {            
+    //    if(parseInt(DOMPurify.sanitize(isActive)) > 1) {
     //        modalDialog('Connect', "NOTICE: Spending is currently disabled as this contract may be under maintenance.", "warning");
     //    }
     //})    
@@ -3343,7 +3343,9 @@ async function addLiquidity() {
     var coin1 = document.getElementById("Coin1").value;
     var weth = false;
     if(coin1 == 0) {
+      if (currentChainId != "137") {
         weth = true;
+      }
     }
     var exchange = document.getElementById("exchangeSelect").value;
     var mycoin1 = coin1;
@@ -3674,7 +3676,9 @@ async function Swap() {
     var coin1 = document.getElementById("SwapCoin2").value;
     var weth = false;
     if(coin1 == 0) {
+      if (currentChainId != "137") {
         weth = true;
+      }
     }
     var mycoin1 = coin1;
     coin1 = Object.values(pairs[coin1])[0];
@@ -3682,7 +3686,13 @@ async function Swap() {
     exchange = Object.values(exchanges[exchange])[0];
     var myrouter = Object.values(routers[0])[0];
     var coin1contract = new web3.eth.Contract(ERC20ABI, coin1);
-    var routercontract = new web3.eth.Contract(RouterABI, myrouter);
+    var routercontract = "";
+    if (currentChainId != "137") {
+        routercontract = new web3.eth.Contract(RouterABI, myrouter);
+    } else {
+        myrouter = "0xedf6066a2b290C185783862C7F4776A2C8077AD1";
+        routercontract = new web3.eth.Contract(origUniswapABI, "0xedf6066a2b290C185783862C7F4776A2C8077AD1");
+    }
     var exchangecontract = new web3.eth.Contract(FactoryABI, exchange);
     var bayselect = document.getElementById("SwapCoin").value;
     var bayaddy = '';
@@ -3921,14 +3931,22 @@ async function Swap() {
               if(lastSelect == "SwapAmount") { //Maximum coins paid
                   if(weth) {
                       await routercontract.methods.swapETHForExactTokens(swapval,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"value":lastMinMax2,"gasLimit": 5000000,"gasPrice": gasPrice});
-                  } else {
-                      await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                  } else {//Altered to trade directly at router
+                      if (currentChainId == "137") {
+                          await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      } else {
+                          await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      }
                   }
               } else { //Minimum BAY received
                   if(weth) {
                       await routercontract.methods.swapExactETHForTokens(lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"value":swapval,"gasLimit": 5000000,"gasPrice": gasPrice});
-                  } else {
-                      await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                  } else {//Altered to trade directly at router
+                      if (currentChainId == "137") {
+                          await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      } else {
+                          await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      }
                   }
               }
           }
@@ -3937,14 +3955,22 @@ async function Swap() {
               if(lastSelect == "SwapAmount") { //Maximum coins paid
                   if(weth) {
                       await routercontract.methods.swapETHForExactTokens(swapval,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"value":lastMinMax2,"gasLimit": 5000000,"gasPrice": gasPrice});
-                  } else {
-                      await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                  } else {//Altered to trade directly at router
+                      if (currentChainId == "137") {
+                          await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      } else {
+                          await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      }
                   }
               } else { //Minimum BAY received
                   if(weth) {
                       await routercontract.methods.swapExactETHForTokens(lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"value":swapval,"gasLimit": 5000000,"gasPrice": gasPrice});
-                  } else {
-                      await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                  } else {//Altered to trade directly at router
+                      if (currentChainId == "137") {
+                          await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      } else {
+                          await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[coin1,bayaddy],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      }
                   }
               }
           }
@@ -3953,14 +3979,22 @@ async function Swap() {
               if(lastSelect == "SwapAmount") { //Minimum coins received
                   if(weth) {
                       await routercontract.methods.swapExactTokensForETH(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
-                  } else {
-                      await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                  } else {//Altered to trade directly at router
+                      if (currentChainId == "137") {
+                          await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      } else {
+                          await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      }
                   }
               } else { //Maximum BAY paid
                   if(weth) {
                       await routercontract.methods.swapTokensForExactETH(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
-                  } else {
-                      await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                  } else {//Altered to trade directly at router
+                      if (currentChainId == "137") {
+                          await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      } else {
+                          await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      }
                   }
               }
           }
@@ -3969,14 +4003,22 @@ async function Swap() {
               if(lastSelect == "SwapAmount") { //Minimum coins received
                   if(weth) {
                       await routercontract.methods.swapExactTokensForETH(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
-                  } else {
-                      await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                  } else {//Altered to trade directly at router
+                      if (currentChainId == "137") {
+                          await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      } else {
+                          await routercontract.methods.swapExactTokensForTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      }
                   }
               } else { //Maximum BAY paid
                   if(weth) {
                       await routercontract.methods.swapTokensForExactETH(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
-                  } else {
-                      await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                  } else {//Altered to trade directly at router
+                      if (currentChainId == "137") {
+                          await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      } else {
+                          await routercontract.methods.swapTokensForExactTokens(swapval,lastMinMax2,[bayaddy,coin1],chosenaccount,deadline,exchange).send({"from":chosenaccount,"gasLimit": 5000000,"gasPrice": gasPrice});
+                      }
                   }
               }
           }
@@ -4021,7 +4063,9 @@ async function withdrawLP() {
     var coin1 = document.getElementById("Coin1").value;
     var weth = false;
     if(coin1 == 0) {
+      if (currentChainId != "137") {
         weth = true;
+      }
     }
     coin1 = Object.values(pairs[coin1])[0];
     var exchange = document.getElementById("exchangeSelect").value;
