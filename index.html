@@ -1562,7 +1562,7 @@ async function login() {
           hideSpinner()
           console.error("Login failed:", e.message);
           // Check if the error message contains '502 Bad Gateway'
-          if (e.message.includes("502 Bad Gateway")) {              
+          if (e.message.includes("502 Bad Gateway")) {
               Swal.fire({
                   icon: 'error',
                   title: 'Issue connecting to MetaMask',
