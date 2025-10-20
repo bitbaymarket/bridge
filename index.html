@@ -1267,13 +1267,11 @@
 //possibly have a dialog box move into focus when asked for the authorization
 //which lets them specify the amount. Also in the security tab advise users
 //on how to run the page locally.
-var isDisconnecting = false;
 
-function disconnect() {
-    isDisconnecting = true;
+async function disconnect() {
     isConnected = false;
 
-    window.ethereum.request({
+    await window.ethereum.request({
         method: "wallet_revokePermissions",
         params: [{ eth_accounts: {} }]
     });
@@ -1557,25 +1555,11 @@ window.addEventListener("load", async function() {
     // detect Metamask account change
     window.ethereum.on('accountsChanged', async function (newaccounts) {
       console.log('accountsChanges',newaccounts);
-
-      // Reset isDisconnecting flag when disconnect completes (empty accounts array)
-      if (newaccounts.length === 0) {
-          isDisconnecting = false;
-          return;
-      }
-
-      if (isDisconnecting) {
-          return;
-      }
-
       defaultvars();
       await login();
     });
      // detect Network account change
     window.ethereum.on('chainChanged', async function(thenetworkId){
-      if (isDisconnecting) {
-          return;
-      }
       console.log('chainChanged',thenetworkId);
       defaultvars();
       await login();
