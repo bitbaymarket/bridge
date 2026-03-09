@@ -2593,8 +2593,8 @@ async function depositStake() {
 }
 
 async function unstakeBAYL() {
-  if (!earnState.polWeb3 || !myaccounts || loginType !== 2) {
-    await Swal.fire(translateThis('Error'), translateThis('Please login with password to unstake'), 'error');
+  if (!earnState.polWeb3 || !myaccounts) {
+    await Swal.fire(translateThis('Error'), translateThis('Please login to withdraw'), 'error');
     return;
   }
   
