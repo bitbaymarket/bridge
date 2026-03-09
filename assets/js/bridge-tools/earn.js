@@ -2597,52 +2597,61 @@ async function unstakeBAYL() {
     await Swal.fire(translateThis('Error'), translateThis('Please login to withdraw'), 'error');
     return;
   }
-  
+  const tokenChoice = await Swal.fire({
+    title: translateThis('Unstake'),
+    text: translateThis('Which token would you like to unstake?'),
+    showDenyButton: true,
+    showCancelButton: true,
+    confirmButtonText: 'BAYL',
+    denyButtonText: 'BAYR',
+  });
+  if (tokenChoice.isDismissed) return;
+  const isBAYL = tokenChoice.isConfirmed;
+  const tokenSymbol = isBAYL ? 'BAYL' : 'BAYR';
   const BN = BigNumber;
-  const baylTreasury = new earnState.polWeb3.eth.Contract(treasuryABI, TREASURY_ADDRESSES.BAYL_TREASURY);
   const vaultContract = new earnState.polWeb3.eth.Contract(vaultABI, TREASURY_ADDRESSES.VAULT);
-  
-  // Check if user is currently in a staking interval
-  const userInfo = validation(JSON.parse(DOMPurify.sanitize(JSON.stringify(await baylTreasury.methods.accessPool(myaccounts).call()))));
-  const claimRate = parseInt(validation(DOMPurify.sanitize(await baylTreasury.methods.claimRate().call())));
-  const currentBlock = parseInt(validation(DOMPurify.sanitize(await earnState.polWeb3.eth.getBlockNumber())));
-  const currentInterval = Math.floor(currentBlock / claimRate);
-  const userInterval = parseInt(userInfo.interval);
-  
-  if (userInterval >= currentInterval) {
-    // User is in current staking interval, calculate when they can withdraw
-    const intervalEndBlock = (userInterval + 1) * claimRate;
-    const blocksRemaining = Math.max(0, intervalEndBlock - currentBlock);
-    await Swal.fire(
-      translateThis('Cannot Unstake'),
-      translateThis('You are currently staking at interval') + ' ' + userInterval + '. ' +
-      translateThis('Please wait') + ' ' + blocksRemaining + ' ' + translateThis('blocks until the interval ends to withdraw.'),
-      'warning'
-    );
-    return;
+  if (isBAYL) {
+    const baylTreasury = new earnState.polWeb3.eth.Contract(treasuryABI, TREASURY_ADDRESSES.BAYL_TREASURY);
+    // Check if user is currently in a staking interval
+    const userInfo = validation(JSON.parse(DOMPurify.sanitize(JSON.stringify(await baylTreasury.methods.accessPool(myaccounts).call()))));
+    const claimRate = parseInt(validation(DOMPurify.sanitize(await baylTreasury.methods.claimRate().call())));
+    const currentBlock = parseInt(validation(DOMPurify.sanitize(await earnState.polWeb3.eth.getBlockNumber())));
+    const currentInterval = Math.floor(currentBlock / claimRate);
+    const userInterval = parseInt(userInfo.interval);
+    if (userInterval >= currentInterval) {
+      // User is in current staking interval, calculate when they can withdraw
+      const intervalEndBlock = (userInterval + 1) * claimRate;
+      const blocksRemaining = Math.max(0, intervalEndBlock - currentBlock);
+      await Swal.fire(
+        translateThis('Cannot Unstake'),
+        translateThis('You are currently staking at interval') + ' ' + userInterval + '. ' +
+        translateThis('Please wait') + ' ' + blocksRemaining + ' ' + translateThis('blocks until the interval ends to withdraw.'),
+        'warning'
+      );
+      return;
+    }
   }
-  
-  // Check BAYL balance in user's vault
+  // Check vault address
   const userVaultAddress = earnState.userVaultAddress || validation(DOMPurify.sanitize(await vaultContract.methods.vaultOf(myaccounts).call()));
   if (!userVaultAddress || userVaultAddress === '0x0000000000000000000000000000000000000000') {
     await Swal.fire(translateThis('Error'), translateThis('No vault found for your account'), 'error');
     return;
   }
-  
-  const baylAddress = validation(DOMPurify.sanitize(await vaultContract.methods.BAYL().call()));
-  const baylContract = new earnState.polWeb3.eth.Contract(ERC20ABI, baylAddress);
-  const vaultBaylBalance = validation(DOMPurify.sanitize(await baylContract.methods.balanceOf(userVaultAddress).call()));
-  const vaultBaylBalanceFormatted = displayBAYAmount(vaultBaylBalance, 4);
-  
-  if (!isGreaterThanZero(vaultBaylBalance)) {
-    await Swal.fire(translateThis('Error'), translateThis('No BAYL available in your vault to unstake'), 'error');
+  // Check token balance in user's vault
+  const tokenAddress = isBAYL
+    ? validation(DOMPurify.sanitize(await vaultContract.methods.BAYL().call()))
+    : validation(DOMPurify.sanitize(await vaultContract.methods.BAYR().call()));
+  const tokenContract = new earnState.polWeb3.eth.Contract(ERC20ABI, tokenAddress);
+  const vaultTokenBalance = validation(DOMPurify.sanitize(await tokenContract.methods.balanceOf(userVaultAddress).call()));
+  const vaultTokenBalanceFormatted = displayBAYAmount(vaultTokenBalance, 8);
+  if (!isGreaterThanZero(vaultTokenBalance)) {
+    await Swal.fire(translateThis('Error'), translateThis('No coins available in your vault to unstake'), 'error');
     return;
   }
-  
   const result = await Swal.fire({
-    title: translateThis('Unstake BAYL'),
+    title: translateThis('Unstake ' + tokenSymbol),
     input: 'number',
-    inputLabel: translateThis('Amount to unstake') + ' (' + translateThis('Available') + ': ' + vaultBaylBalanceFormatted + ' BAYL)',
+    inputLabel: translateThis('Amount to unstake') + ' (' + translateThis('Available') + ': ' + vaultTokenBalanceFormatted + ' ' + tokenSymbol + ')',
     inputPlaceholder: '0.0',
     showCancelButton: true,
     inputValidator: (value) => {
@@ -2650,8 +2659,8 @@ async function unstakeBAYL() {
         return translateThis('Please enter a valid amount');
       }
       const amountWei = BN(value).times('1e8').toString();
-      if (new BN(amountWei).gt(new BN(vaultBaylBalance))) {
-        return translateThis('Insufficient BAYL balance in vault. Maximum available') + ': ' + vaultBaylBalanceFormatted;
+      if (new BN(amountWei).gt(new BN(vaultTokenBalance))) {
+        return translateThis('Insufficient balance in vault. Maximum available') + ': ' + vaultTokenBalanceFormatted;
       }
     }
   });
@@ -2659,9 +2668,13 @@ async function unstakeBAYL() {
   try {
     showSpinner();
     const amount = BN(result.value).times('1e8').toString();
-    await sendTx(vaultContract, "withdrawLiquid", [amount], 1500000, "0", true, false);
+    if (isBAYL) {
+      await sendTx(vaultContract, "withdrawLiquid", [amount], 1500000, "0", true, false);
+    } else {
+      await sendTx(vaultContract, "withdrawReserve", [amount], 1500000, "0", true, false);
+    }
     hideSpinner();
-    await Swal.fire(translateThis('Success'), translateThis('BAYL unstaked successfully!'), 'success');
+    await Swal.fire(translateThis('Success'), translateThis('Coins unstaked successfully!'), 'success');
     await refreshStakingInfo();
   } catch (error) {
     hideSpinner();
