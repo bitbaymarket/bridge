@@ -87,7 +87,8 @@ var fallbackProvidersDefault = [
       message.includes('api key disabled') ||
       message.includes('rpc error') ||
       message.includes('unauthorized') ||
-      message.includes('paid plan')
+      message.includes('paid plan') ||
+      message.includes('max fee per gas less than block base fee')
     );
   }
 
