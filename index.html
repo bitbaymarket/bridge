@@ -2780,6 +2780,11 @@ async function login2() {
           document.getElementById("treasury-tab").click();
         }
         
+        // Check automation wizard state after balances are loaded
+        if (typeof checkAutomationOnLogin === 'function') {
+          checkAutomationOnLogin().catch(e => console.error('Error checking automation:', e));
+        }
+        
         hideSpinner();
     } catch (e) {
         hideSpinner()
@@ -4181,6 +4186,49 @@ async function getBAYPrice(tempWeb3 = null) {
       return "error";
     }
     return assumedPriceBAY.toString();
+  } catch (e) {
+    console.log(e);
+    return "error";
+  }
+}
+
+async function getBAYRPrice(tempWeb3 = null) {
+  try {
+    const w3 = tempWeb3 || web3;
+    const BN2 = w3.utils.BN;
+
+    const bayrAddr = BAYRaddy;
+    const pairToken = "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063";
+
+    var mypair = '';
+    var exchange = "0x9e5A52f57b3038F1B8EeE45F28b3C1967e22799C";
+    var exchangecontract = new w3.eth.Contract(FactoryABI, exchange);
+    await exchangecontract.methods.getPair(bayrAddr, pairToken).call().then(function (thisresult) {
+        mypair = validation(DOMPurify.sanitize(thisresult));
+    });
+    var myreserves = '';
+    var assumedPriceBAYR = '';
+    if(/^0x0+$/.test(mypair) == false) {
+        paircontract = new w3.eth.Contract(PairABI, mypair);
+        await paircontract.methods.getReserves().call().then(function (thisresult) {
+            myreserves = validation(JSON.parse(DOMPurify.sanitize(JSON.stringify(thisresult))));
+        });
+        const token0 = validation(DOMPurify.sanitize(await paircontract.methods.token0().call()));
+        let reserveBase, reserveBAYR;
+
+        if (token0.toLowerCase() === bayrAddr.toLowerCase()) {
+          reserveBAYR = new BN2(myreserves._reserve0.toString());
+          reserveBase = new BN2(myreserves._reserve1.toString());
+        } else {
+          reserveBAYR = new BN2(myreserves._reserve1.toString());
+          reserveBase = new BN2(myreserves._reserve0.toString());
+        }
+        assumedPriceBAYR = (reserveBase.mul(new BN2("100000000")).div(reserveBAYR)).div(new BN2("10000000000"));
+    } else {
+      console.log("invalid pair");
+      return "error";
+    }
+    return assumedPriceBAYR.toString();
   } catch (e) {
     console.log(e);
     return "error";

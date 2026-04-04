@@ -1,5 +1,4 @@
 // Automation Wizard for BitBay Bridge
-// Handles setup wizard for new users to automate common tasks
 
 (function() {
 
@@ -11,6 +10,10 @@ var wizardState = {
   polBalance: 0,
   ethBalance: 0
 };
+
+var ETH_GAS_LIDO = 500000;
+var ETH_GAS_SEND = 150000;
+var MIN_ALLOC_USD = 0.50;
 
 function getWizardStorageKey() {
   return myaccounts + '_automationWizard';
@@ -41,36 +44,12 @@ async function fetchPrices() {
   var polRaw = await getPOLPrice();
   var ethRaw = await getWETHPrice();
   var bayRaw = await getBAYPrice();
+  var bayrRaw = await getBAYRPrice();
 
   wizardState.polPrice = polRaw !== "error" ? parseInt(polRaw) / 1e8 : 0;
   wizardState.ethPrice = ethRaw !== "error" ? parseInt(ethRaw) / 1e8 : 0;
   wizardState.bayPrice = bayRaw !== "error" ? parseInt(bayRaw) / 1e8 : 0;
-
-  // BAYR price from its Uniswap pair
-  try {
-    var bayrAddr = "0xcFE838e07f68D68B95e405684A2fB44FD498d700";
-    var pairToken = "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063";
-    var exchange = "0x9e5A52f57b3038F1B8EeE45F28b3C1967e22799C";
-    var BN2 = web3.utils.BN;
-    var exchangecontract = new web3.eth.Contract(FactoryABI, exchange);
-    var mypair = validation(DOMPurify.sanitize(await exchangecontract.methods.getPair(bayrAddr, pairToken).call()));
-    if (!/^0x0+$/.test(mypair)) {
-      var paircontract = new web3.eth.Contract(PairABI, mypair);
-      var myreserves = validation(JSON.parse(DOMPurify.sanitize(JSON.stringify(await paircontract.methods.getReserves().call()))));
-      var token0 = validation(DOMPurify.sanitize(await paircontract.methods.token0().call()));
-      var reserveBase, reserveBAYR;
-      if (token0.toLowerCase() === bayrAddr.toLowerCase()) {
-        reserveBAYR = new BN2(myreserves._reserve0.toString());
-        reserveBase = new BN2(myreserves._reserve1.toString());
-      } else {
-        reserveBAYR = new BN2(myreserves._reserve1.toString());
-        reserveBase = new BN2(myreserves._reserve0.toString());
-      }
-      wizardState.bayrPrice = parseInt(reserveBase.mul(new BN2("100000000")).div(reserveBAYR).div(new BN2("10000000000")).toString()) / 1e8;
-    }
-  } catch(e) {
-    console.log('Error getting BAYR price:', e);
-  }
+  wizardState.bayrPrice = bayrRaw !== "error" ? parseInt(bayrRaw) / 1e8 : 0;
 }
 
 async function fetchBalances() {
@@ -87,6 +66,20 @@ async function fetchBalances() {
     wizardState.ethBalance = parseFloat(new BigNumber(ethBal).dividedBy('1e18').toFixed(8));
   } catch(e) {
     wizardState.ethBalance = 0;
+  }
+}
+
+async function estimateEthGasPrice() {
+  try {
+    var ethRpc = typeof getEthereumRpc === 'function' ? getEthereumRpc() : 'https://eth.drpc.org/';
+    var ethWeb3 = new Web3(ethRpc);
+    var gp = validation(DOMPurify.sanitize(await ethWeb3.eth.getGasPrice()));
+    var gpBN = new BigNumber(gp).times(1.5);
+    if (gpBN.gt('500000000000')) gpBN = new BigNumber('500000000000');
+    if (gpBN.lt('100000000')) gpBN = new BigNumber('100000000');
+    return gpBN;
+  } catch(e) {
+    return new BigNumber('30000000000');
   }
 }
 
@@ -141,7 +134,7 @@ async function ensureWalletUnlocked() {
       }
       web3.eth.accounts.wallet.add(pkResult.value);
       loginType = 2;
-      if (typeof earnState !== 'undefined') earnState.isPasswordLogin = true;
+      earnState.isPasswordLogin = true;
       await Swal.fire({
         icon: 'success',
         title: translateThis('Wallet Unlocked'),
@@ -265,8 +258,9 @@ window.launchAutomationWizard = async function() {
       true,
       sliderHTML('lido', translateThis('Allocation')) +
       '<div style="margin-top:6px;">' +
-        '<label style="font-size:0.85em;">' + translateThis('Lock Term (months)') + ':</label>' +
-        '<input type="number" id="wizLidoMonths" value="6" min="1" max="36" class="swal2-input" style="width:80px;height:30px;font-size:0.9em;padding:4px;">' +
+        '<label style="font-size:0.85em;">' + translateThis('Lock Period (days)') + ':</label>' +
+        '<input type="number" id="wizLidoDays" value="180" min="1" max="1095" class="swal2-input" style="width:100px;height:30px;font-size:0.9em;padding:4px;">' +
+        '<span style="font-size:0.8em;color:#777;margin-left:6px;">' + translateThis('Default: 180 days (≈6 months)') + '</span>' +
       '</div>') +
 
     buildAccordionItem('stable', '💱', translateThis('Earn Yield at Uniswap (StableVault)'),
@@ -329,7 +323,7 @@ window.launchAutomationWizard = async function() {
         allocStable: parseInt(document.getElementById('wizSlider_stable').value) || 0,
         allocBay: parseInt(document.getElementById('wizSlider_bay').value) || 0,
         allocBayr: parseInt(document.getElementById('wizSlider_bayr').value) || 0,
-        lidoMonths: parseInt(document.getElementById('wizLidoMonths').value) || 6
+        lidoDays: parseInt(document.getElementById('wizLidoDays').value) || 180
       };
       if (!choices.pol && !choices.lido && !choices.stable && !choices.bay && !choices.bayr) {
         Swal.close();
@@ -343,7 +337,6 @@ window.launchAutomationWizard = async function() {
   if (!wizResult.isConfirmed || !wizResult.value) return;
   var choices = wizResult.value;
 
-  // Show relevant disclaimers
   var disclaimers = [];
   disclaimers.push('<li>' + translateThis('This website is not an exchange and does not take custody of user funds or charge any fees. It is designed to maximize your security by keeping all actions client-side. Although Uniswap/Curve/etc are generally considered safe, we recommend reviewing the source code of any DEX and understanding the associated risks. This website is open source and has been audited, but for maximum security we encourage users to download the code from GitHub and run it locally.') + '</li>');
 
@@ -374,7 +367,6 @@ window.launchAutomationWizard = async function() {
   });
   if (!disclaimerResult.isConfirmed) return;
 
-  // Ask how much ETH they intend to deposit
   var ethResult = await Swal.fire({
     title: translateThis('ETH Deposit Amount'),
     html: '<div style="text-align:left;">' +
@@ -397,7 +389,18 @@ window.launchAutomationWizard = async function() {
   if (!ethResult.isConfirmed) return;
   var ethAmount = ethResult.value;
 
-  // Calculate breakdown
+  var ethGasPrice = await estimateEthGasPrice();
+  var lidoGasCostETH = 0;
+  var bridgeSendCostETH = 0;
+  if (choices.lido) {
+    lidoGasCostETH = parseFloat(ethGasPrice.times(ETH_GAS_LIDO).dividedBy('1e18').toFixed(8));
+  }
+  var needsBridge = choices.stable || choices.bay || choices.bayr || choices.pol;
+  if (needsBridge) {
+    bridgeSendCostETH = parseFloat(ethGasPrice.times(ETH_GAS_SEND).dividedBy('1e18').toFixed(8));
+  }
+  var totalGasCostETH = lidoGasCostETH + bridgeSendCostETH;
+
   var ethUSD = ethAmount * wizardState.ethPrice;
   var polCostETH = 0;
   var polCostUSD = 0;
@@ -408,12 +411,13 @@ window.launchAutomationWizard = async function() {
     polCostETH = polCostUSD / wizardState.ethPrice;
   }
 
-  var remainingETH = ethAmount - polCostETH;
+  var remainingETH = ethAmount - polCostETH - totalGasCostETH;
   if (remainingETH < 0) {
     await Swal.fire({
       title: translateThis('Insufficient ETH'),
-      html: '<p>' + translateThis('The ETH amount specified is not enough to cover the Polygon gas acquisition.') + '</p>' +
-        '<p>' + translateThis('POL cost') + ': ~' + polCostETH.toFixed(6) + ' ETH ($' + polCostUSD.toFixed(2) + ')</p>' +
+      html: '<p>' + translateThis('The ETH amount specified is not enough to cover the gas and transaction costs.') + '</p>' +
+        (polCostETH > 0 ? '<p>' + translateThis('POL cost') + ': ~' + polCostETH.toFixed(6) + ' ETH ($' + polCostUSD.toFixed(2) + ')</p>' : '') +
+        '<p>' + translateThis('Estimated ETH gas') + ': ~' + totalGasCostETH.toFixed(6) + ' ETH</p>' +
         '<p>' + translateThis('You specified') + ': ' + ethAmount.toFixed(6) + ' ETH ($' + ethUSD.toFixed(2) + ')</p>',
       icon: 'error'
     });
@@ -431,20 +435,44 @@ window.launchAutomationWizard = async function() {
   var bayETH = choices.bay ? remainingETH * (choices.allocBay / totalAlloc) : 0;
   var bayrETH = choices.bayr ? remainingETH * (choices.allocBayr / totalAlloc) : 0;
 
+  var tooSmall = [];
+  if (choices.lido && lidoETH * wizardState.ethPrice < MIN_ALLOC_USD) tooSmall.push('Lido HODL');
+  if (choices.stable && stableETH * wizardState.ethPrice < MIN_ALLOC_USD) tooSmall.push('StableVault');
+  if (choices.bay && bayETH * wizardState.ethPrice < MIN_ALLOC_USD) tooSmall.push('Buy BAY');
+  if (choices.bayr && bayrETH * wizardState.ethPrice < MIN_ALLOC_USD) tooSmall.push('Buy BAYR');
+  if (tooSmall.length > 0) {
+    await Swal.fire({
+      title: translateThis('Insufficient ETH'),
+      html: '<p>' + translateThis('We recommend at least $0.50 per selected allocation to cover transaction costs. The following allocations are too small:') + '</p>' +
+        '<p><strong>' + tooSmall.join(', ') + '</strong></p>' +
+        '<p>' + translateThis('Please increase the total ETH amount or reduce the number of selected tasks.') + '</p>',
+      icon: 'warning'
+    });
+    return;
+  }
+
   var lidoUSD = lidoETH * wizardState.ethPrice;
   var stableUSD = stableETH * wizardState.ethPrice;
   var bayUSD = bayETH * wizardState.ethPrice;
   var bayrUSD = bayrETH * wizardState.ethPrice;
+  var gasCostUSD = totalGasCostETH * wizardState.ethPrice;
 
   var summaryHTML = '<div style="text-align:left;font-size:0.9em;max-height:50vh;overflow-y:auto;padding-right:4px;">';
   summaryHTML += '<table style="width:100%;border-collapse:collapse;">';
   summaryHTML += '<tr style="border-bottom:1px solid #eee;"><th style="text-align:left;padding:4px;">' + translateThis('Task') + '</th><th style="text-align:right;padding:4px;">ETH</th><th style="text-align:right;padding:4px;">~USD</th></tr>';
 
+  if (totalGasCostETH > 0) {
+    var gasLabel = '⛏️ ' + translateThis('Est. ETH gas');
+    if (choices.lido && needsBridge) gasLabel += ' (Lido + bridge)';
+    else if (choices.lido) gasLabel += ' (Lido)';
+    else gasLabel += ' (bridge send)';
+    summaryHTML += '<tr style="border-bottom:1px solid #eee;color:#777;"><td style="padding:4px;">' + gasLabel + '</td><td style="text-align:right;padding:4px;">' + totalGasCostETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + gasCostUSD.toFixed(2) + '</td></tr>';
+  }
   if (choices.pol) {
     summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">⛽ ' + translateThis('Get POL') + ' (±5%)</td><td style="text-align:right;padding:4px;">' + polCostETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + polCostUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.lido) {
-    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">🏦 ' + translateThis('Lido HODL') + ' (' + choices.lidoMonths + 'mo)</td><td style="text-align:right;padding:4px;">' + lidoETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + lidoUSD.toFixed(2) + '</td></tr>';
+    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">🏦 ' + translateThis('Lido HODL') + ' (' + choices.lidoDays + ' ' + translateThis('days') + ')</td><td style="text-align:right;padding:4px;">' + lidoETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + lidoUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.stable) {
     summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">💱 ' + translateThis('StableVault') + ' (±5%)</td><td style="text-align:right;padding:4px;">' + stableETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + stableUSD.toFixed(2) + '</td></tr>';
@@ -471,7 +499,6 @@ window.launchAutomationWizard = async function() {
   });
   if (!confirmResult.isConfirmed) return;
 
-  // Show deposit address
   var depositAddress = myaccounts;
   var savedData = {
     account: myaccounts,
@@ -485,6 +512,7 @@ window.launchAutomationWizard = async function() {
       bayr: wizardState.bayrPrice
     },
     breakdown: {
+      gasCostETH: totalGasCostETH,
       polETH: polCostETH,
       lidoETH: lidoETH,
       stableETH: stableETH,
@@ -583,7 +611,7 @@ function showAutomationBanner() {
   });
 }
 
-async function checkAutomationOnLogin() {
+window.checkAutomationOnLogin = async function() {
   if (!myaccounts || loginType === 0) return;
 
   var data = getWizardData();
@@ -605,25 +633,20 @@ async function checkAutomationOnLogin() {
     return;
   }
 
-  // New user check - all balances zero
   var declined = localStorage.getItem(getNewUserKey());
   if (declined === 'true') return;
 
   try {
     var polBal = validation(DOMPurify.sanitize(await web3.eth.getBalance(myaccounts)));
     if (new BigNumber(polBal).gt(0)) return;
-
-    var bayAddr = "0x5119E704BCDF8e81229E19d0794C33A12caCc7Ce";
-    var bayrAddr = "0xcFE838e07f68D68B95e405684A2fB44FD498d700";
-    var erc20ABI = [{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"}];
-
-    var bayContract = new web3.eth.Contract(erc20ABI, bayAddr);
-    var bayBal = validation(DOMPurify.sanitize(await bayContract.methods.balanceOf(myaccounts).call()));
-    if (new BigNumber(bayBal).gt(0)) return;
-
-    var bayrContract = new web3.eth.Contract(erc20ABI, bayrAddr);
-    var bayrBal = validation(DOMPurify.sanitize(await bayrContract.methods.balanceOf(myaccounts).call()));
-    if (new BigNumber(bayrBal).gt(0)) return;
+    if (typeof BAYLaddy !== 'undefined' && BAYLaddy && typeof baylcontract !== 'undefined') {
+      var bayBal = validation(DOMPurify.sanitize(await baylcontract.methods.balanceOf(myaccounts).call()));
+      if (new BigNumber(bayBal).gt(0)) return;
+    }
+    if (typeof BAYRaddy !== 'undefined' && BAYRaddy && typeof bayrcontract !== 'undefined') {
+      var bayrBal = validation(DOMPurify.sanitize(await bayrcontract.methods.balanceOf(myaccounts).call()));
+      if (new BigNumber(bayrBal).gt(0)) return;
+    }
 
     var welcomeResult = await Swal.fire({
       title: '👋 ' + translateThis('Welcome to BitBay!'),
@@ -642,24 +665,9 @@ async function checkAutomationOnLogin() {
   } catch(e) {
     console.log('New user check error:', e);
   }
-}
+};
 
-function hookLogin2() {
-  var origLogin2 = window.login2;
-  if (typeof origLogin2 === 'function' && !origLogin2._wizardHooked) {
-    window.login2 = async function() {
-      await origLogin2.apply(this, arguments);
-      setTimeout(function() {
-        checkAutomationOnLogin();
-      }, 3000);
-    };
-    window.login2._wizardHooked = true;
-  }
-}
-
-// Hook after all scripts have loaded
 window.addEventListener('load', function() {
-  hookLogin2();
   setTimeout(function() {
     if (myaccounts && loginType !== 0) {
       var data = getWizardData();
