@@ -158,9 +158,14 @@ async function ensureWalletUnlocked() {
   return true;
 }
 
+function toggleAccordionPanel(headerEl) {
+  var panel = headerEl.nextElementSibling;
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
 function buildAccordionItem(id, emoji, title, description, checked, extraHTML) {
   return '<div style="border:1px solid #ccc;border-radius:6px;margin-bottom:8px;overflow:hidden;">' +
-    '<div style="display:flex;align-items:center;padding:10px 12px;cursor:pointer;background:#f7f7f7;" onclick="(function(el){var p=el.nextElementSibling;p.style.display=p.style.display===\'none\'?\'block\':\'none\';})(this)">' +
+    '<div class="wizAccordionHeader" style="display:flex;align-items:center;padding:10px 12px;cursor:pointer;background:#f7f7f7;">' +
       '<input type="checkbox" id="wiz_' + id + '" ' + (checked ? 'checked' : '') +
         ' style="all:unset;display:inline-block;cursor:pointer;appearance:auto;-webkit-appearance:checkbox;-moz-appearance:checkbox;margin-right:8px;flex-shrink:0;" onclick="event.stopPropagation()">' +
       '<span style="font-size:1.1em;">' + emoji + ' ' + title + '</span>' +
@@ -291,6 +296,10 @@ window.launchAutomationWizard = async function() {
     confirmButtonText: translateThis('Continue'),
     cancelButtonText: translateThis('Cancel'),
     didOpen: function() {
+      var headers = document.querySelectorAll('.wizAccordionHeader');
+      for (var h = 0; h < headers.length; h++) {
+        headers[h].addEventListener('click', function() { toggleAccordionPanel(this); });
+      }
       var sliders = {
         lido: document.getElementById('wizSlider_lido'),
         stable: document.getElementById('wizSlider_stable'),
@@ -492,15 +501,21 @@ window.launchAutomationWizard = async function() {
     html: '<div style="text-align:left;">' +
       '<p>' + translateThis('Please send exactly') + ' <strong>' + ethAmount.toFixed(6) + ' ETH</strong> ' + translateThis('to your main address on the Ethereum network') + ':</p>' +
       '<div style="word-break:break-all;font-family:monospace;background:#f5f5f5;padding:10px;border-radius:5px;margin:10px 0;display:flex;align-items:center;gap:8px;">' +
-        '<span id="wizDepositAddr">' + DOMPurify.sanitize(depositAddress) + '</span>' +
-        '<span class="no-invert" style="cursor:pointer;font-size:1.2em;" onclick="copyAddress(\'' + DOMPurify.sanitize(depositAddress) + '\')">📋</span>' +
+        '<span id="wizDepositAddr"></span>' +
+        '<span id="wizCopyBtn" class="no-invert" style="cursor:pointer;font-size:1.2em;">📋</span>' +
       '</div>' +
       '<p style="color:#777;font-size:0.9em;">' + translateThis('Network') + ': Ethereum Mainnet</p>' +
       '<p style="margin-top:8px;"><strong>' + translateThis('Automation tasks have been set.') + '</strong> ' + translateThis('Please keep this tab open and in focus for it to complete. It will commence when the correct amount of ETH is detected.') + '</p>' +
       '</div>',
     icon: 'success',
     confirmButtonText: translateThis('OK'),
-    width: '500px'
+    width: '500px',
+    didOpen: function() {
+      document.getElementById('wizDepositAddr').textContent = depositAddress;
+      document.getElementById('wizCopyBtn').addEventListener('click', function() {
+        copyAddress(depositAddress);
+      });
+    }
   });
 };
 
@@ -528,7 +543,7 @@ function showAutomationBanner() {
     var info = '<div style="text-align:left;font-size:0.9em;">';
     info += '<p><strong>' + translateThis('Status') + ':</strong> ' + translateThis('Waiting for ETH deposit') + '</p>';
     info += '<p><strong>' + translateThis('Amount') + ':</strong> ' + d.ethAmount.toFixed(6) + ' ETH (~$' + (d.ethAmount * d.prices.eth).toFixed(2) + ')</p>';
-    info += '<p><strong>' + translateThis('Address') + ':</strong> <span style="font-family:monospace;font-size:0.85em;word-break:break-all;">' + DOMPurify.sanitize(d.account) + '</span></p>';
+    info += '<p><strong>' + translateThis('Address') + ':</strong> <span id="wizStatusAddr" style="font-family:monospace;font-size:0.85em;word-break:break-all;"></span></p>';
     var tasks = [];
     if (d.choices.pol) tasks.push('⛽ ' + translateThis('Get POL'));
     if (d.choices.lido) tasks.push('🏦 ' + translateThis('Lido HODL'));
@@ -544,7 +559,11 @@ function showAutomationBanner() {
       showCancelButton: true,
       confirmButtonText: translateThis('OK'),
       cancelButtonText: translateThis('Cancel Automation'),
-      cancelButtonColor: '#d33'
+      cancelButtonColor: '#d33',
+      didOpen: function() {
+        var addrEl = document.getElementById('wizStatusAddr');
+        if (addrEl) addrEl.textContent = d.account;
+      }
     });
     if (r.dismiss === Swal.DismissReason.cancel) {
       var confirmCancel = await Swal.fire({
@@ -642,7 +661,6 @@ function hookLogin2() {
 window.addEventListener('load', function() {
   hookLogin2();
   setTimeout(function() {
-    hookLogin2();
     if (myaccounts && loginType !== 0) {
       var data = getWizardData();
       if (data && data.status === 'pending') {
