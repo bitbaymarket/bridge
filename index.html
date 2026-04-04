@@ -3292,10 +3292,14 @@ function stripZeros(valStr) {
     : valStr;
 }
 
+function stripSafe(str) {
+  return str.replace(/[^a-zA-Z0-9 .,!?\-\n]/g, '');
+}
+
 // Display error in a compact scrollable format suitable for mobile
 async function showScrollableError(title, errorMessage, icon = 'error') {
-  const sanitizedTitle = DOMPurify.sanitize(title);
-  const sanitizedMessage = DOMPurify.sanitize(String(errorMessage || 'Unknown error'));
+  const sanitizedTitle = stripSafe(DOMPurify.sanitize(title));
+  const sanitizedMessage = stripSafe(DOMPurify.sanitize(String(errorMessage || 'Unknown error')));
   
   // If the error is short (< 200 chars), show it normally
   if (sanitizedMessage.length < 200) {
@@ -5232,7 +5236,7 @@ async function sendLiquid() {
     } catch (e) { 
       hideSpinner();
       console.log(e);
-      const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
       await showScrollableError(translateThis('Error'), message);
     }
 }
@@ -5284,7 +5288,7 @@ async function sendReserve() {
     } catch (e) { 
       hideSpinner();
       console.log(e);
-      const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
       await showScrollableError(translateThis('Error'), message);      
     }
 }
@@ -5345,7 +5349,7 @@ async function sendALT() {
     } catch (e) { 
       hideSpinner();
       console.log(e);
-      const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
       await showScrollableError(translateThis('Error'), message);
     }
 }
@@ -5403,7 +5407,7 @@ async function sendBase() {
     } catch (e) { 
       hideSpinner();
       console.log(e);
-      const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
       await showScrollableError(translateThis('Error'), message);
     }
 }
@@ -5431,7 +5435,7 @@ async function sendFrozen() {
         } catch (e) { 
           hideSpinner();
           console.log(e);
-          const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+          const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
           await showScrollableError(translateThis('Error'), message);
         }
     }
@@ -5663,7 +5667,7 @@ async function mintFromBitBay(jsondata2="") {
     } catch (e) {
       hideSpinner();
       console.log(e);
-      const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
       await showScrollableError(translateThis('Error'), message);
     }
 }
@@ -5721,7 +5725,7 @@ async function registerBitBay(regaddy) {
     } catch (e) {
       hideSpinner();
       console.log(e);
-      const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
       await showScrollableError(translateThis('Error'), message);      
     } 
 }
@@ -5800,7 +5804,7 @@ async function burnToBitBay(burnamount) {
     } catch (e) {
       hideSpinner();
       console.log(e);
-      const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
       await showScrollableError(translateThis('Error'), message);      
     } 
 }
@@ -6283,7 +6287,7 @@ async function addLiquidity() {
           //modalDialog('Connect', "Transaction failed", "danger");
           hideSpinner();
           console.log(e);
-          const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+          const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
           await showScrollableError(translateThis('Error'), message);
           return;
       }
@@ -6697,7 +6701,7 @@ async function Swap() {
           hideSpinner();
           //document.getElementById("SwapSummary").innerHTML = '<div class="callout callout-danger" >Error: Swap failed!</div>';
           console.log(e);
-          const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+          const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
           await showScrollableError(translateThis('Transaction failed'), message);
           return;
       }
@@ -6897,7 +6901,7 @@ async function withdrawLP() {
           hideSpinner();
           //document.getElementById("LPdetails1").innerHTML = 'Withdrawal failed';
           console.log(e);
-          const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+          const message = translateThis('Transaction failed:') + ' ' + (e.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
           await showScrollableError(translateThis('Transaction failed'), message);
           return;
       }

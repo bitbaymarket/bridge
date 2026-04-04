@@ -746,7 +746,8 @@ function setupStableProfitDestinationHandler() {
         hideSpinner();
         console.log(error);
         dropdown.value = dropdown.dataset.previousValue || 'user';
-        await showScrollableError(translateThis('Transaction failed'), translateThis('Please check your browsers console for the full error message'));
+        const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
+        await showScrollableError(translateThis('Transaction failed'), message);
         return;
       }
     }
@@ -1164,7 +1165,7 @@ async function depositLidoHODL() {
     } catch (error) {
       hideSpinner();
       console.log(error);
-      const message = translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
       await showScrollableError(translateThis('Transaction failed'), message);
     }
     
@@ -1252,7 +1253,7 @@ async function withdrawLidoHODL() {
     } catch (error) {
       hideSpinner();
       console.log(error);
-      const message = translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
       await showScrollableError(translateThis('Transaction failed'), message);
     }
     
@@ -1528,7 +1529,7 @@ async function depositStableVault() {
   } catch (error) {
     hideSpinner();
     console.log(error);
-    const message = translateThis("Please check your browsers console for the full error message");
+    const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
     await showScrollableError(translateThis('Transaction failed'), message);
   }
 }
@@ -1608,7 +1609,7 @@ async function collectStableFees() {
   } catch (error) {
     hideSpinner();
     console.log(error);
-    const message = translateThis("Please check your browsers console for the full error message");
+    const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
     await showScrollableError(translateThis('Transaction failed'), message);
   }
 }
@@ -1660,7 +1661,7 @@ async function withdrawStableVault() {
   } catch (error) {
     hideSpinner();
     console.log(error);
-    const message = translateThis("Please check your browsers console for the full error message");
+    const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
     await showScrollableError(translateThis('Transaction failed'), message);
   }
 }
@@ -2337,15 +2338,21 @@ async function loadStakingInfo() {
     // Load BAYL treasury info
     const baylTreasury = new earnState.polWeb3.eth.Contract(treasuryABI, TREASURY_ADDRESSES.BAYL_TREASURY);
     
-    const totalTokens = validation(DOMPurify.sanitize(await baylTreasury.methods.totalTokens().call()));
-    const totalShares = validation(DOMPurify.sanitize(await baylTreasury.methods.totalShares().call()));
+    const totalTokens = validation(DOMPurify.sanitize(await baylTreasury.methods.totalTokens().call()));    
     const refreshRate = validation(DOMPurify.sanitize(await baylTreasury.methods.refreshRate().call()));
     const claimRate = validation(DOMPurify.sanitize(await baylTreasury.methods.claimRate().call()));
+    const lastInterval = validation(DOMPurify.sanitize(await baylTreasury.methods.lastInterval().call()));
+    const currentBlock = parseInt(validation(DOMPurify.sanitize(await earnState.polWeb3.eth.getBlockNumber())));
+    const currentInterval = Math.floor(currentBlock / parseInt(claimRate));
+    const pendingInterval = parseInt(lastInterval) < currentInterval;
+
+    const totalShares = pendingInterval
+      ? validation(DOMPurify.sanitize(await baylTreasury.methods.nextTotalShares().call()))
+      : validation(DOMPurify.sanitize(await baylTreasury.methods.totalShares().call()));
     
     document.getElementById('baylTotalStaked').textContent = displayBAYAmount(totalTokens, 4);
     document.getElementById('baylTotalShares').textContent = totalShares;
     document.getElementById('baylRefreshRate').textContent = Math.floor(parseInt(refreshRate) / 86400) + ' days';
-    const currentBlock = parseInt(validation(DOMPurify.sanitize(await earnState.polWeb3.eth.getBlockNumber())));
 
     const blocksRemaining = Math.floor(currentBlock % parseInt(claimRate));
     document.getElementById('baylClaimRate').textContent = claimRate + ' blocks (' + blocksRemaining + "/" + claimRate + ")";
@@ -2587,7 +2594,7 @@ async function depositStake() {
   } catch (error) {
     hideSpinner();
     console.log(error);
-    const message = translateThis("Please check your browsers console for the full error message");
+    const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
     await showScrollableError(translateThis('Transaction failed'), message);
   }
 }
@@ -2679,7 +2686,7 @@ async function unstakeBAYL() {
   } catch (error) {
     hideSpinner();
     console.log(error);
-    const message = translateThis("Please check your browsers console for the full error message");
+    const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
     await showScrollableError(translateThis('Transaction failed'), message);
   }
 }
@@ -2797,7 +2804,7 @@ async function claimStakingRewards(showSwal = false) {
     hideSpinner();
     console.error('Error claiming rewards:', error);
     if(showSwal) {
-      const message = translateThis("Please check your browsers console for the full error message");
+      const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
       await showScrollableError(translateThis('Transaction failed'), message);
     }
   }
@@ -3524,7 +3531,7 @@ async function showWithdrawDialog() {
     
   } catch (error) {
     console.log(error);
-    const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+    const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
     await showScrollableError(translateThis('Transaction failed'), message);
   }
 }
@@ -3605,7 +3612,7 @@ async function executeWithdrawal(withdrawData) {
   } catch (error) {
     hideSpinner();
     console.log(error);
-    const message = translateThis('Transaction failed:') + ' ' + translateThis("Please check your browsers console for the full error message");
+    const message = translateThis('Transaction failed:') + ' ' + (error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error)));
     await showScrollableError(translateThis('Transaction failed'), message);
   }
 }
