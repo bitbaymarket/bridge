@@ -18,10 +18,16 @@ var MIN_ALLOC_USD = 0.50;
 var WIZARD_AUTOBRIDGE_V0 = '0x5D618a7eBed1e0281Ae3B92eF99c4fDD41432A6a';
 var WIZARD_POL_ETH = '0x455e53CBB86018Ac2B8092FD2dADeA5e1F8ad3A8';
 var WIZARD_WETH_ETH = '0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2';
-var WIZARD_UNISWAP_V4_UNIVERSAL_ROUTER = '0x66a9893cc07d91d95644aedd05d03f95e1dba8af';
+var WIZARD_UNISWAP_UNIVERSAL_ROUTER = '0x66a9893cc07d91d95644aedd05d03f95e1dba8af';
+var WIZARD_UNISWAP_V3_FEE_TIER = '0001f4';
 var WIZARD_ROUTER_POLYGON = '0x418fBc4E6B5C694495c90C7cDE1f293EE444F10B';
 var WIZARD_EXCHANGE_POLYGON = '0x9e5A52f57b3038F1B8EeE45F28b3C1967e22799C';
 var WIZARD_MIN_POL_GAS_WEI = '1000000000000000000';
+var WIZARD_SLIPPAGE_POL = 0.95;
+var WIZARD_SLIPPAGE_STABLE = 0.90;
+var WIZARD_SLIPPAGE_BAY = 0.90;
+var WIZARD_LIDO_SLIPPAGE_BPS = 100;
+var WIZARD_EXECUTOR_POLL_INTERVAL_MS = 15000;
 
 var WIZARD_STATUSES = {
   pending: 'pending',
@@ -284,6 +290,7 @@ window.launchAutomationWizard = async function() {
   var polRec = polNeedGas
     ? translateThis('Recommended: Your POL balance is low.')
     : translateThis('Your POL balance appears sufficient.');
+  var stableSlippageLabel = ((1 - WIZARD_SLIPPAGE_STABLE) * 100).toFixed(0);
 
   var polPriceDisplay = wizardState.polPrice > 0 ? '$' + wizardState.polPrice.toFixed(4) : 'N/A';
   var ethPriceDisplay = wizardState.ethPrice > 0 ? '$' + wizardState.ethPrice.toFixed(2) : 'N/A';
@@ -305,7 +312,7 @@ window.launchAutomationWizard = async function() {
       '</div>') +
 
     buildAccordionItem('stable', '💱', translateThis('Earn Yield at Uniswap (StableVault)'),
-      translateThis('Earn a decentralized and reliable profit from stablecoin pair trading fees where the position is automatically managed to maximize profits while supporting the ecosystem. Includes ±10% slippage for the trade to get DAI.'),
+      translateThis('Earn a decentralized and reliable profit from stablecoin pair trading fees where the position is automatically managed to maximize profits while supporting the ecosystem. Includes ±') + stableSlippageLabel + '% ' + translateThis('slippage for the trade to get DAI.'),
       true,
       sliderHTML('stable', translateThis('Allocation'))) +
 
@@ -532,7 +539,7 @@ window.launchAutomationWizard = async function() {
     summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">🏦 ' + translateThis('Lido HODL') + ' (' + choices.lidoDays + ' ' + translateThis('days') + ')</td><td style="text-align:right;padding:4px;">' + lidoETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + lidoUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.stable) {
-    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">💱 ' + translateThis('StableVault') + ' (±10%)</td><td style="text-align:right;padding:4px;">' + stableETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + stableUSD.toFixed(2) + '</td></tr>';
+    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">💱 ' + translateThis('StableVault') + ' (±' + stableSlippageLabel + '%)</td><td style="text-align:right;padding:4px;">' + stableETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + stableUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.bay) {
     summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">🪙 ' + translateThis('Buy BAY') + ' (±10%)</td><td style="text-align:right;padding:4px;">' + bayETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + bayUSD.toFixed(2) + '</td></tr>';
@@ -687,15 +694,21 @@ function ensureWizardAmounts(data) {
 }
 
 function isNetworkIssueError(error) {
+  if (error && typeof error.code !== 'undefined') {
+    var code = error.code;
+    if (code === -32603 || code === -32000 || code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ENOTFOUND') {
+      return true;
+    }
+  }
   var msg = '';
   try {
     msg = (error && error.message ? error.message : String(error || '')).toLowerCase();
   } catch(e) {
     msg = '';
   }
-  return msg.indexOf('network') !== -1 ||
+  return msg.indexOf('network error') !== -1 ||
     msg.indexOf('timeout') !== -1 ||
-    msg.indexOf('fetch') !== -1 ||
+    msg.indexOf('failed to fetch') !== -1 ||
     msg.indexOf('gateway') !== -1 ||
     msg.indexOf('rate limit') !== -1 ||
     msg.indexOf('reconnect') !== -1 ||
@@ -708,7 +721,7 @@ async function ensureTokenAllowance(web3Instance, tokenAddress, spender, require
   var tokenContract = new web3Instance.eth.Contract(ERC20ABI, tokenAddress);
   var allowance = validation(DOMPurify.sanitize(await tokenContract.methods.allowance(myaccounts, spender).call()));
   if (new BN(allowance).gte(new BN(requiredWei))) return;
-  await sendTx(tokenContract, "approve", [spender, requiredWei], 150000, "0", true, !!switchNetworks, false);
+  await sendTx(tokenContract, "approve", [spender, requiredWei], 150000, "0", true, switchNetworks, false);
 }
 
 async function executePolSwapEth(data) {
@@ -721,10 +734,11 @@ async function executePolSwapEth(data) {
   var polContract = new ethWeb3.eth.Contract(ERC20ABI, WIZARD_POL_ETH);
   var preBal = validation(DOMPurify.sanitize(await polContract.methods.balanceOf(myaccounts).call()));
   var quotedOutWei = new BN(data.breakdown.polETH).times(data.prices.eth).dividedBy(data.prices.pol).times('1e18');
-  var minOutWei = quotedOutWei.times(0.95).toFixed(0, BN.ROUND_DOWN);
+  var minOutWei = quotedOutWei.times(WIZARD_SLIPPAGE_POL).toFixed(0, BN.ROUND_DOWN);
 
   var deadline = Math.floor(Date.now() / 1000) + 300;
-  var pathBytes = WIZARD_WETH_ETH.toLowerCase().replace('0x', '') + '0001f4' + WIZARD_POL_ETH.toLowerCase().replace('0x', '');
+  // 0x0001f4 encodes fee tier 500 (0.05%) for Uniswap v3 path bytes
+  var pathBytes = WIZARD_WETH_ETH.toLowerCase().replace('0x', '') + WIZARD_UNISWAP_V3_FEE_TIER + WIZARD_POL_ETH.toLowerCase().replace('0x', '');
   var wrapInput = ethWeb3.eth.abi.encodeParameters(['address','uint256'], [myaccounts, amountInWei]);
   var v3SwapInput = ethWeb3.eth.abi.encodeParameters(
     ['address','uint256','uint256','bytes','bool'],
@@ -732,7 +746,7 @@ async function executePolSwapEth(data) {
   );
   var sweepInput = ethWeb3.eth.abi.encodeParameters(['address','address','uint256'], [WIZARD_POL_ETH, myaccounts, minOutWei]);
   await sendTx(
-    new ethWeb3.eth.Contract(wizardUniversalRouterAbi, WIZARD_UNISWAP_V4_UNIVERSAL_ROUTER),
+    new ethWeb3.eth.Contract(wizardUniversalRouterAbi, WIZARD_UNISWAP_UNIVERSAL_ROUTER),
     'execute',
     ['0x0b0004', [wrapInput, v3SwapInput, sweepInput], deadline],
     ETH_GAS_SWAP,
@@ -744,7 +758,10 @@ async function executePolSwapEth(data) {
 
   var postBal = validation(DOMPurify.sanitize(await polContract.methods.balanceOf(myaccounts).call()));
   var received = new BN(postBal).minus(new BN(preBal));
-  if (received.lte(0) || received.lt(new BN(minOutWei))) {
+  if (received.lte(0)) {
+    throw new Error('POL swap failed - no tokens received');
+  }
+  if (received.lt(new BN(minOutWei))) {
     throw new Error('POL swap slippage exceeded tolerance');
   }
   return received.toFixed(0, BN.ROUND_DOWN);
@@ -769,7 +786,8 @@ async function executeLidoDeposit(data) {
   var ethWeb3 = getEthWeb3ForWizard();
   if (!ethWeb3) throw new Error('Ethereum RPC unavailable');
   var lidoContract = new ethWeb3.eth.Contract(lidoVaultABI, TREASURY_ADDRESSES.LIDO_VAULT);
-  await sendTx(lidoContract, "tradeAndLockStETH", [100, data.choices.lidoDays, false], ETH_GAS_LIDO, amountWei, true, true);
+  // keep same slippage used in earn.js staking flow (100 bps = 1%)
+  await sendTx(lidoContract, "tradeAndLockStETH", [WIZARD_LIDO_SLIPPAGE_BPS, data.choices.lidoDays, false], ETH_GAS_LIDO, amountWei, true, true);
 }
 
 async function executeBridgeEth(data) {
@@ -802,7 +820,7 @@ async function executeStableVaultPath(data) {
   var preDai = validation(DOMPurify.sanitize(await daiContract.methods.balanceOf(myaccounts).call()));
 
   var quotedDaiOut = new BN(data.breakdown.stableETH).times(data.prices.eth).times('1e18');
-  var minDaiOut = quotedDaiOut.times(0.9).toFixed(0, BN.ROUND_DOWN);
+  var minDaiOut = quotedDaiOut.times(WIZARD_SLIPPAGE_STABLE).toFixed(0, BN.ROUND_DOWN);
   await swapWethToTokenOnPolygon(amountInWei, TREASURY_ADDRESSES.DAI, minDaiOut);
 
   var postDai = validation(DOMPurify.sanitize(await daiContract.methods.balanceOf(myaccounts).call()));
@@ -833,7 +851,7 @@ async function executeBaySwapPath(data, isBayr) {
   var preBal = validation(DOMPurify.sanitize(await tokenContract.methods.balanceOf(myaccounts).call()));
   var quotePrice = isBayr ? data.prices.bayr : data.prices.bay;
   var expectedOut = new BN(data.breakdown[amountEthKey]).times(data.prices.eth).dividedBy(quotePrice).times('1e8');
-  var minOut = expectedOut.times(0.9).toFixed(0, BN.ROUND_DOWN);
+  var minOut = expectedOut.times(WIZARD_SLIPPAGE_BAY).toFixed(0, BN.ROUND_DOWN);
   await swapWethToTokenOnPolygon(amountInWei, tokenOut, minOut);
   var postBal = validation(DOMPurify.sanitize(await tokenContract.methods.balanceOf(myaccounts).call()));
   var received = new BN(postBal).minus(new BN(preBal));
@@ -968,7 +986,7 @@ function startWizardExecutor() {
     executeWizardAutomationTick().catch(function(err) {
       console.log('Wizard executor interval error:', err);
     });
-  }, 15000);
+  }, WIZARD_EXECUTOR_POLL_INTERVAL_MS);
   executeWizardAutomationTick().catch(function(err) {
     console.log('Wizard executor startup error:', err);
   });
