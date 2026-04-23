@@ -172,8 +172,12 @@
       <div class=" swapSelector btn login_btn" onclick="buyBitBay(1)">
             <img class="swapSelectorLogo uil uil-link" src="./assets/images/buy.png">
             <div class="swapSelectorText">&nbsp&nbsp&nbsp&nbsp&nbspBuy BitBay&nbsp&nbsp&nbsp&nbsp&nbsp</div>
+      </div><br>
+      <div class=" swapSelector btn login_btn" onclick="launchAutomationWizard()">
+            <span class="no-invert">🪄</span>
+            <div class="swapSelectorText">&nbspLaunch Wizard&nbsp</div>
       </div>
-      
+
       <!-- ROI Notification for Home Page (shows before login) -->
       <div class="callout callout-success hidden" id="homeRoiNotification" style="margin-top: 10px; text-align: center; font-size: 16px;">
         📈 Calculating ROI...
@@ -1229,6 +1233,7 @@
 <script type="text/javascript" src="./assets/js/bridge-tools/treasury/flow.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/earn.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/wizard.js"></script>
 
 <script type="text/javascript" src="./assets/js/bridge-tools/coin.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/crypto-sha256.js"></script>
@@ -2771,6 +2776,11 @@ async function login2() {
           onEarnUserLogin().catch(e => console.error('Error initializing Earn tab:', e));
           document.getElementById("treasury-tab").click();
         }
+
+        // Check automation wizard state after balances are loaded
+        if (typeof checkAutomationOnLogin === 'function') {
+          checkAutomationOnLogin().catch(e => console.error('Error checking automation:', e));
+        }
         
         hideSpinner();
     } catch (e) {
@@ -3560,26 +3570,68 @@ async function checkbalances() {
       '<div style="font-family: \'Lucida Console\', Monaco, monospace; background-color: #f4f4ff; color: #004400; padding: 16px; border: 2px solid #333; border-radius: 6px; max-width: 500px; margin: auto; box-shadow: 4px 4px 0 #bbb;">' +
         '<div style="margin-bottom: 10px; font-weight: bold;">Contracts to import into MetaMask to interact with BitBay:</div>' +
 
-        createAddressBlock("BitBay", BAYLaddy) +
-        createAddressBlock("BitBay Reserve", BAYRaddy) +
-        createAddressBlock("BitBay Frozen", BAYFaddy) +
+        createAddressBlock("BitBay", BAYLaddy, true) +
+        createAddressBlock("BitBay Reserve", BAYRaddy, true) +
+        createAddressBlock("BitBay Frozen", BAYFaddy, true) +
       '</div>';
 
-    function createAddressBlock(label, address) {
+    function createAddressBlock(label, address, crop = false) {
+      // Unique id so we can target the exact address box when revealing
+      var blockId = 'addrBlock_' + Math.random().toString(36).slice(2, 10);
+
+      var shownAddress;
+      if (crop) {
+        // Show first half + "...(show)" link
+        var half = Math.ceil(address.length / 2);
+        var firstHalf = address.substring(0, half);
+        shownAddress =
+          '<span id="' + blockId + '_text">' + firstHalf + '...</span>' +
+          '<span id="' + blockId + '_toggle" ' +
+                'style="color: #0066cc; cursor: pointer; text-decoration: underline; margin-left: 4px;" ' +
+                'onclick="revealAddress(\'' + blockId + '\', \'' + address + '\')">(show)</span>';
+      } else {
+        shownAddress = address;
+      }
+
       return (
         '<div style="margin-bottom: 10px;">' +
           '<div style="color: #000066; font-weight: bold; font-size: 12px;">' + label + ':</div>' +
           '<div style="display: flex; align-items: center; flex-wrap: wrap;">' +
-            '<div style="background-color: #ffffff; border: 1px dashed #888; padding: 6px 8px; margin-right: 8px; font-size: 11px; overflow-wrap: break-word; word-break: break-all; flex: 1;">' +
-              address +
+            '<div id="' + blockId + '" style="background-color: #ffffff; border: 1px dashed #888; padding: 6px 8px; margin-right: 8px; font-size: 11px; overflow-wrap: break-word; word-break: break-all; flex: 1;">' +
+              shownAddress +
             '</div>' +
-            '<div style="cursor: pointer; font-size: 16px; user-select: none;" onclick="copyAddress(\'' + address + '\')" title="Copy address">' +
+            '<div style="cursor: pointer; font-size: 16px; user-select: none;" onclick="copyAddress(\'' + address + '\', ' + crop.toString() + ')" title="Copy address">' +
               '<span class="no-invert">📋</span>' +
             '</div>' +
           '</div>' +
         '</div>'
       );
     }
+
+    // Warn the user before revealing the full contract address
+    window.revealAddress = async function (blockId, address) {
+      const result = await Swal.fire({
+        icon: 'warning',
+        title: 'Do NOT send funds to this address!',
+        html:
+          translateThis('This contract address is only for importing into MetaMask so you can track and manage your BitBay coins.') +
+          '<br><br><br>' + translateThis('Sending funds directly to this contract will result in permanent loss of your funds. Do you understand and wish to reveal the full address?'),
+        showCancelButton: true,
+        confirmButtonText: translateThis('I understand'),
+        cancelButtonText: translateThis('Cancel'),
+        confirmButtonColor: '#cc0000',
+        reverseButtons: true,
+        focusCancel: true
+      });
+
+      if (result.isConfirmed) {
+        var box = document.getElementById(blockId);
+        if (box) {
+          box.textContent = address; // reveal full address, removes the (show) link
+        }
+      }
+    };
+
     await getNetworkInfo();
     await getMarketData();
     await checkAutomaticTradingAccount();
@@ -3645,7 +3697,7 @@ function populateSendOptions() {
 
 
 
-function copyAddress(address) {
+async function copyAddress(address, notifyThis = false) {
   const tempInput = document.createElement("textarea");
   tempInput.value = address;
 
@@ -3657,6 +3709,25 @@ function copyAddress(address) {
   tempInput.select();
 
   try {
+    if(notifyThis) {
+      const result = await Swal.fire({
+        icon: 'warning',
+        title: 'Do NOT send funds to this address!',
+        html:
+          translateThis('This contract address is only for importing into MetaMask so you can track and manage your BitBay coins.') +
+          '<br><br><br>' + translateThis('Sending funds directly to this contract will result in permanent loss of your funds. Do you understand and wish to copy the address?'),
+        showCancelButton: true,
+        confirmButtonText: translateThis('I understand'),
+        cancelButtonText: translateThis('Cancel'),
+        confirmButtonColor: '#cc0000',
+        reverseButtons: true,
+        focusCancel: true
+      });
+
+      if (!result.isConfirmed) {
+        return;
+      }
+    }
     const successful = document.execCommand("copy");
     if (successful) {
       Swal.fire({
@@ -4173,6 +4244,49 @@ async function getBAYPrice(tempWeb3 = null) {
       return "error";
     }
     return assumedPriceBAY.toString();
+  } catch (e) {
+    console.log(e);
+    return "error";
+  }
+}
+
+async function getBAYRPrice(tempWeb3 = null) {
+  try {
+    const w3 = tempWeb3 || web3;
+    const BN2 = w3.utils.BN;
+
+    const bayrAddr = "0xA177cB6ae813230618Af26F059d9370af9f4AEE9";
+    const pairToken = "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063";
+
+    var mypair = '';
+    var exchange = "0x9e5A52f57b3038F1B8EeE45F28b3C1967e22799C";
+    var exchangecontract = new w3.eth.Contract(FactoryABI, exchange);
+    await exchangecontract.methods.getPair(bayrAddr, pairToken).call().then(function (thisresult) {
+        mypair = validation(DOMPurify.sanitize(thisresult));
+    });
+    var myreserves = '';
+    var assumedPriceBAYR = '';
+    if(/^0x0+$/.test(mypair) == false) {
+        paircontract = new w3.eth.Contract(PairABI, mypair);
+        await paircontract.methods.getReserves().call().then(function (thisresult) {
+            myreserves = validation(JSON.parse(DOMPurify.sanitize(JSON.stringify(thisresult))));
+        });
+        const token0 = validation(DOMPurify.sanitize(await paircontract.methods.token0().call()));
+        let reserveBase, reserveBAYR;
+
+        if (token0.toLowerCase() === bayrAddr.toLowerCase()) {
+          reserveBAYR = new BN2(myreserves._reserve0.toString());
+          reserveBase = new BN2(myreserves._reserve1.toString());
+        } else {
+          reserveBAYR = new BN2(myreserves._reserve1.toString());
+          reserveBase = new BN2(myreserves._reserve0.toString());
+        }
+        assumedPriceBAYR = (reserveBase.mul(new BN2("100000000")).div(reserveBAYR)).div(new BN2("10000000000"));
+    } else {
+      console.log("invalid pair");
+      return "error";
+    }
+    return assumedPriceBAYR.toString();
   } catch (e) {
     console.log(e);
     return "error";

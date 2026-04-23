@@ -1432,12 +1432,23 @@ async function depositStableVault() {
     if (!result) {
       hideSpinner();
       return;
-    }    
+    }
+
     const amountWei = earnState.polWeb3.utils.toWei(amount, 'ether');
     const stableContract = new earnState.polWeb3.eth.Contract(stableVaultABI, TREASURY_ADDRESSES.STABLE_POOL);
     const feeVault = validation(DOMPurify.sanitize(await stableContract.methods.feeVault().call()));
     const feeVaultContract = new earnState.polWeb3.eth.Contract(stableVaultFeesABI, feeVault);
-    
+    const isInRange = validation(DOMPurify.sanitize(await stableContract.methods.isInRange().call())) === true;
+    if (!isInRange) {
+      hideSpinner();
+      await Swal.fire({
+        title: translateThis('Pool out of range'),
+        html: translateThis('The StableVault pool is currently in the process of being repositioned to continue generating yield. Deposits will resume after the stakers perform that transaction. Please try again later.'),
+        icon: 'warning'
+      });
+      return;
+    }
+
     // Check current sendTo setting
     const currentSendTo = validation(DOMPurify.sanitize(await feeVaultContract.methods.sendTo(myaccounts).call()));
     let targetSendTo = myaccounts; // Default to user
@@ -1860,7 +1871,7 @@ async function toggleStaking() {
           <br>
           <p>${translateThis('It is recommended that you connect to this site using a password instead of Metamask. However if you wish to stake with Metamask you may unlock your wallet directly using your private key.')}</p>
           <br>
-          <p><strong>${translateThis('Security Notice')}:</strong> ${translateThis('We only recommend this option if you trust the source code of this site. You may also wish to run the code locally. You are responsible for risks of direct key handling.')}</p>
+          <p><strong>${translateThis('Security Notice')}:</strong> ${translateThis('We only recommend this option if you trust the source code of this site. You may also wish to run the code locally. You are responsible for the risks of direct key handling.')}</p>
           <br>
           <p>${translateThis('If you agree, you may continue and unlock your wallet using your private key.')}</p>
         </div>
