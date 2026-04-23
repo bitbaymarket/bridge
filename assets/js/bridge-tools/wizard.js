@@ -18,7 +18,7 @@ var MIN_ALLOC_USD = 0.50;
 var WIZARD_AUTOBRIDGE_V0 = '0x5D618a7eBed1e0281Ae3B92eF99c4fDD41432A6a';
 var WIZARD_POL_ETH = '0x455e53CBB86018Ac2B8092FD2dADeA5e1F8ad3A8';
 var WIZARD_WETH_ETH = '0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2';
-var WIZARD_UNISWAP_UNIVERSAL_ROUTER = '0x66a9893cc07d91d95644aedd05d03f95e1dba8af';
+var WIZARD_UNISWAP_UNIVERSAL_ROUTER = '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
 var WIZARD_UNISWAP_V3_FEE_TIER = '0001f4';
 var WIZARD_ROUTER_POLYGON = '0x418fBc4E6B5C694495c90C7cDE1f293EE444F10B';
 var WIZARD_EXCHANGE_POLYGON = '0x9e5A52f57b3038F1B8EeE45F28b3C1967e22799C';
@@ -737,7 +737,7 @@ async function executePolSwapEth(data) {
   var minOutWei = quotedOutWei.times(WIZARD_SLIPPAGE_POL).toFixed(0, BN.ROUND_DOWN);
 
   var deadline = Math.floor(Date.now() / 1000) + 300;
-  // 0x0001f4 encodes fee tier 500 (0.05%) for Uniswap v3 path bytes
+  // 0x0001f4 encodes fee 500, which equals a 0.05% Uniswap v3 fee tier
   var pathBytes = WIZARD_WETH_ETH.toLowerCase().replace('0x', '') + WIZARD_UNISWAP_V3_FEE_TIER + WIZARD_POL_ETH.toLowerCase().replace('0x', '');
   var wrapInput = ethWeb3.eth.abi.encodeParameters(['address','uint256'], [myaccounts, amountInWei]);
   var v3SwapInput = ethWeb3.eth.abi.encodeParameters(
@@ -786,7 +786,6 @@ async function executeLidoDeposit(data) {
   var ethWeb3 = getEthWeb3ForWizard();
   if (!ethWeb3) throw new Error('Ethereum RPC unavailable');
   var lidoContract = new ethWeb3.eth.Contract(lidoVaultABI, TREASURY_ADDRESSES.LIDO_VAULT);
-  // keep same slippage used in earn.js staking flow (100 bps = 1%)
   await sendTx(lidoContract, "tradeAndLockStETH", [WIZARD_LIDO_SLIPPAGE_BPS, data.choices.lidoDays, false], ETH_GAS_LIDO, amountWei, true, true);
 }
 
@@ -1065,8 +1064,8 @@ function showAutomationBanner() {
       });
       if (confirmCancel.isConfirmed) {
         clearWizardData();
-        var bannerEl2 = document.getElementById('wizardAutomationBanner');
-        if (bannerEl2) bannerEl2.remove();
+        var bannerEl = document.getElementById('wizardAutomationBanner');
+        if (bannerEl) bannerEl.remove();
       }
     }
   });
