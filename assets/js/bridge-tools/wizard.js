@@ -15,6 +15,43 @@ var ETH_GAS_LIDO = 500000;
 var ETH_GAS_SWAP = 500000;
 var ETH_GAS_SEND = 150000;
 var MIN_ALLOC_USD = 0.50;
+var WIZARD_AUTOBRIDGE_V0 = '0x5D618a7eBed1e0281Ae3B92eF99c4fDD41432A6a';
+var WIZARD_POL_ETH = '0x455e53CBB86018Ac2B8092FD2dADeA5e1F8ad3A8';
+var WIZARD_WETH_ETH = '0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2';
+var WIZARD_UNISWAP_V4_UNIVERSAL_ROUTER = '0x66a9893cc07d91d95644aedd05d03f95e1dba8af';
+var WIZARD_ROUTER_POLYGON = '0x418fBc4E6B5C694495c90C7cDE1f293EE444F10B';
+var WIZARD_EXCHANGE_POLYGON = '0x9e5A52f57b3038F1B8EeE45F28b3C1967e22799C';
+var WIZARD_MIN_POL_GAS_WEI = '1000000000000000000';
+
+var WIZARD_STATUSES = {
+  pending: 'pending',
+  ethReceived: 'eth_received',
+  taskPolSwap: 'task_pol_swap',
+  taskPolBridge: 'task_pol_bridge',
+  taskLido: 'task_lido',
+  taskEthBridge: 'task_eth_bridge',
+  taskWaitPolygonFunds: 'task_wait_polygon_funds',
+  taskStable: 'task_stable',
+  taskBay: 'task_bay',
+  taskBayr: 'task_bayr',
+  completed: 'completed',
+  failed: 'failed'
+};
+
+var wizardExecutorInterval = null;
+var wizardExecutorBusy = false;
+
+var wizardUniversalRouterAbi = [{
+  "inputs": [
+    {"internalType":"bytes","name":"commands","type":"bytes"},
+    {"internalType":"bytes[]","name":"inputs","type":"bytes[]"},
+    {"internalType":"uint256","name":"deadline","type":"uint256"}
+  ],
+  "name":"execute",
+  "outputs":[],
+  "stateMutability":"payable",
+  "type":"function"
+}];
 
 function getWizardStorageKey() {
   return myaccounts + '_automationWizard';
@@ -61,8 +98,11 @@ async function fetchBalances() {
     wizardState.polBalance = 0;
   }
   try {
-    var ethRpc = typeof getEthereumRpc === 'function' ? getEthereumRpc() : 'https://eth.drpc.org/';
-    var ethWeb3 = new Web3(ethRpc);
+    var ethWeb3 = (typeof earnState !== 'undefined' && earnState.ethWeb3) ? earnState.ethWeb3 : null;
+    if (!ethWeb3) {
+      wizardState.ethBalance = 0;
+      return;
+    }
     var ethBal = validation(DOMPurify.sanitize(await ethWeb3.eth.getBalance(myaccounts)));
     wizardState.ethBalance = parseFloat(new BigNumber(ethBal).dividedBy('1e18').toFixed(8));
   } catch(e) {
@@ -72,8 +112,8 @@ async function fetchBalances() {
 
 async function estimateEthGasPrice() {
   try {
-    var ethRpc = typeof getEthereumRpc === 'function' ? getEthereumRpc() : 'https://eth.drpc.org/';
-    var ethWeb3 = new Web3(ethRpc);
+    var ethWeb3 = (typeof earnState !== 'undefined' && earnState.ethWeb3) ? earnState.ethWeb3 : null;
+    if (!ethWeb3) return false;
     var gp = validation(DOMPurify.sanitize(await ethWeb3.eth.getGasPrice()));
     var gpBN = new BigNumber(gp).times(1.5);
     if (gpBN.gt('500000000000')) gpBN = new BigNumber('500000000000');
@@ -265,7 +305,7 @@ window.launchAutomationWizard = async function() {
       '</div>') +
 
     buildAccordionItem('stable', '💱', translateThis('Earn Yield at Uniswap (StableVault)'),
-      translateThis('Earn a decentralized and reliable profit from stablecoin pair trading fees where the position is automatically managed to maximize profits while supporting the ecosystem. Includes ±5% slippage for the trade to get DAI.'),
+      translateThis('Earn a decentralized and reliable profit from stablecoin pair trading fees where the position is automatically managed to maximize profits while supporting the ecosystem. Includes ±10% slippage for the trade to get DAI.'),
       true,
       sliderHTML('stable', translateThis('Allocation'))) +
 
@@ -492,7 +532,7 @@ window.launchAutomationWizard = async function() {
     summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">🏦 ' + translateThis('Lido HODL') + ' (' + choices.lidoDays + ' ' + translateThis('days') + ')</td><td style="text-align:right;padding:4px;">' + lidoETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + lidoUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.stable) {
-    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">💱 ' + translateThis('StableVault') + ' (±5%)</td><td style="text-align:right;padding:4px;">' + stableETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + stableUSD.toFixed(2) + '</td></tr>';
+    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">💱 ' + translateThis('StableVault') + ' (±10%)</td><td style="text-align:right;padding:4px;">' + stableETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + stableUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.bay) {
     summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">🪙 ' + translateThis('Buy BAY') + ' (±10%)</td><td style="text-align:right;padding:4px;">' + bayETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + bayUSD.toFixed(2) + '</td></tr>';
@@ -522,6 +562,15 @@ window.launchAutomationWizard = async function() {
   if (!confirmResult.isConfirmed) return;
 
   var depositAddress = myaccounts;
+  var currentEthBalanceWei = "0";
+  try {
+    var ethWeb3ForSave = (typeof earnState !== 'undefined' && earnState.ethWeb3) ? earnState.ethWeb3 : null;
+    if (ethWeb3ForSave) {
+      currentEthBalanceWei = validation(DOMPurify.sanitize(await ethWeb3ForSave.eth.getBalance(myaccounts)));
+    }
+  } catch(e) {
+    currentEthBalanceWei = "0";
+  }
   var savedData = {
     account: myaccounts,
     timestamp: Date.now(),
@@ -541,7 +590,14 @@ window.launchAutomationWizard = async function() {
       bayETH: bayETH,
       bayrETH: bayrETH
     },
-    status: 'pending'
+    status: WIZARD_STATUSES.pending,
+    startEthBalanceWei: currentEthBalanceWei,
+    amountsWei: null,
+    tracked: {
+      polReceivedWei: "0",
+      stableDaiReceivedWei: "0"
+    },
+    failureReason: ''
   };
   setWizardData(savedData);
   showAutomationBanner();
@@ -569,17 +625,369 @@ window.launchAutomationWizard = async function() {
   });
 };
 
+function isTerminalStatus(status) {
+  return status === WIZARD_STATUSES.completed || status === WIZARD_STATUSES.failed;
+}
+
+function getCurrentTaskLabel(status) {
+  if (status === WIZARD_STATUSES.pending) return translateThis('Waiting for ETH deposit');
+  if (status === WIZARD_STATUSES.ethReceived) return translateThis('ETH deposit received');
+  if (status === WIZARD_STATUSES.taskPolSwap) return translateThis('Buying POL on Ethereum');
+  if (status === WIZARD_STATUSES.taskPolBridge) return translateThis('Bridging POL to Polygon');
+  if (status === WIZARD_STATUSES.taskLido) return translateThis('Depositing to Lido HODL');
+  if (status === WIZARD_STATUSES.taskEthBridge) return translateThis('Bridging ETH to Polygon');
+  if (status === WIZARD_STATUSES.taskWaitPolygonFunds) return translateThis('Waiting for Polygon arrivals');
+  if (status === WIZARD_STATUSES.taskStable) return translateThis('StableVault sequence');
+  if (status === WIZARD_STATUSES.taskBay) return translateThis('Buying BAY');
+  if (status === WIZARD_STATUSES.taskBayr) return translateThis('Buying BAYR');
+  if (status === WIZARD_STATUSES.completed) return translateThis('Completed');
+  if (status === WIZARD_STATUSES.failed) return translateThis('Failed');
+  return translateThis('Pending');
+}
+
+function setWizardStatus(status, extra) {
+  var data = getWizardData();
+  if (!data) return null;
+  data.status = status;
+  if (extra) {
+    for (var key in extra) {
+      data[key] = extra[key];
+    }
+  }
+  setWizardData(data);
+  showAutomationBanner();
+  return data;
+}
+
+function getEthWeb3ForWizard() {
+  if (typeof earnState !== 'undefined' && earnState.ethWeb3) return earnState.ethWeb3;
+  return null;
+}
+
+function getPolWeb3ForWizard() {
+  if (typeof earnState !== 'undefined' && earnState.polWeb3) return earnState.polWeb3;
+  return null;
+}
+
+function ensureWizardAmounts(data) {
+  if (!data || data.amountsWei) return data;
+  var BN = BigNumber;
+  data.amountsWei = {
+    polETH: new BN(data.breakdown && data.breakdown.polETH ? data.breakdown.polETH : 0).times('1e18').toFixed(0, BN.ROUND_DOWN),
+    lidoETH: new BN(data.breakdown && data.breakdown.lidoETH ? data.breakdown.lidoETH : 0).times('1e18').toFixed(0, BN.ROUND_DOWN),
+    stableETH: new BN(data.breakdown && data.breakdown.stableETH ? data.breakdown.stableETH : 0).times('1e18').toFixed(0, BN.ROUND_DOWN),
+    bayETH: new BN(data.breakdown && data.breakdown.bayETH ? data.breakdown.bayETH : 0).times('1e18').toFixed(0, BN.ROUND_DOWN),
+    bayrETH: new BN(data.breakdown && data.breakdown.bayrETH ? data.breakdown.bayrETH : 0).times('1e18').toFixed(0, BN.ROUND_DOWN)
+  };
+  if (!data.tracked) data.tracked = {};
+  if (!data.tracked.polReceivedWei) data.tracked.polReceivedWei = "0";
+  if (!data.tracked.stableDaiReceivedWei) data.tracked.stableDaiReceivedWei = "0";
+  setWizardData(data);
+  return data;
+}
+
+function isNetworkIssueError(error) {
+  var msg = '';
+  try {
+    msg = (error && error.message ? error.message : String(error || '')).toLowerCase();
+  } catch(e) {
+    msg = '';
+  }
+  return msg.indexOf('network') !== -1 ||
+    msg.indexOf('timeout') !== -1 ||
+    msg.indexOf('fetch') !== -1 ||
+    msg.indexOf('gateway') !== -1 ||
+    msg.indexOf('rate limit') !== -1 ||
+    msg.indexOf('reconnect') !== -1 ||
+    msg.indexOf('invalid json rpc response') !== -1 ||
+    msg.indexOf('header not found') !== -1;
+}
+
+async function ensureTokenAllowance(web3Instance, tokenAddress, spender, requiredWei, switchNetworks) {
+  var BN = BigNumber;
+  var tokenContract = new web3Instance.eth.Contract(ERC20ABI, tokenAddress);
+  var allowance = validation(DOMPurify.sanitize(await tokenContract.methods.allowance(myaccounts, spender).call()));
+  if (new BN(allowance).gte(new BN(requiredWei))) return;
+  await sendTx(tokenContract, "approve", [spender, requiredWei], 150000, "0", true, !!switchNetworks, false);
+}
+
+async function executePolSwapEth(data) {
+  var BN = BigNumber;
+  var ethWeb3 = getEthWeb3ForWizard();
+  if (!ethWeb3) throw new Error('Ethereum RPC unavailable');
+  var amountInWei = data.amountsWei.polETH;
+  if (!amountInWei || new BN(amountInWei).lte(0)) return "0";
+
+  var polContract = new ethWeb3.eth.Contract(ERC20ABI, WIZARD_POL_ETH);
+  var preBal = validation(DOMPurify.sanitize(await polContract.methods.balanceOf(myaccounts).call()));
+  var quotedOutWei = new BN(data.breakdown.polETH).times(data.prices.eth).dividedBy(data.prices.pol).times('1e18');
+  var minOutWei = quotedOutWei.times(0.95).toFixed(0, BN.ROUND_DOWN);
+
+  var deadline = Math.floor(Date.now() / 1000) + 300;
+  var pathBytes = WIZARD_WETH_ETH.toLowerCase().replace('0x', '') + '0001f4' + WIZARD_POL_ETH.toLowerCase().replace('0x', '');
+  var wrapInput = ethWeb3.eth.abi.encodeParameters(['address','uint256'], [myaccounts, amountInWei]);
+  var v3SwapInput = ethWeb3.eth.abi.encodeParameters(
+    ['address','uint256','uint256','bytes','bool'],
+    [myaccounts, amountInWei, minOutWei, '0x' + pathBytes, false]
+  );
+  var sweepInput = ethWeb3.eth.abi.encodeParameters(['address','address','uint256'], [WIZARD_POL_ETH, myaccounts, minOutWei]);
+  await sendTx(
+    new ethWeb3.eth.Contract(wizardUniversalRouterAbi, WIZARD_UNISWAP_V4_UNIVERSAL_ROUTER),
+    'execute',
+    ['0x0b0004', [wrapInput, v3SwapInput, sweepInput], deadline],
+    ETH_GAS_SWAP,
+    amountInWei,
+    true,
+    true,
+    true
+  );
+
+  var postBal = validation(DOMPurify.sanitize(await polContract.methods.balanceOf(myaccounts).call()));
+  var received = new BN(postBal).minus(new BN(preBal));
+  if (received.lte(0) || received.lt(new BN(minOutWei))) {
+    throw new Error('POL swap slippage exceeded tolerance');
+  }
+  return received.toFixed(0, BN.ROUND_DOWN);
+}
+
+async function executeBridgePolEth(data) {
+  var BN = BigNumber;
+  var ethWeb3 = getEthWeb3ForWizard();
+  if (!ethWeb3) throw new Error('Ethereum RPC unavailable');
+  var amountWei = data.tracked && data.tracked.polReceivedWei ? data.tracked.polReceivedWei : "0";
+  if (new BN(amountWei).lte(0)) throw new Error('No POL amount to bridge');
+
+  await ensureTokenAllowance(ethWeb3, WIZARD_POL_ETH, WIZARD_AUTOBRIDGE_V0, amountWei, true);
+  var autobridge = new ethWeb3.eth.Contract(autoBridgev0ABI, WIZARD_AUTOBRIDGE_V0);
+  await sendTx(autobridge, "bridgeERC20", [WIZARD_POL_ETH, myaccounts, amountWei], 450000, "0", true, true, false);
+}
+
+async function executeLidoDeposit(data) {
+  var BN = BigNumber;
+  var amountWei = data.amountsWei.lidoETH;
+  if (!amountWei || new BN(amountWei).lte(0)) return;
+  var ethWeb3 = getEthWeb3ForWizard();
+  if (!ethWeb3) throw new Error('Ethereum RPC unavailable');
+  var lidoContract = new ethWeb3.eth.Contract(lidoVaultABI, TREASURY_ADDRESSES.LIDO_VAULT);
+  await sendTx(lidoContract, "tradeAndLockStETH", [100, data.choices.lidoDays, false], ETH_GAS_LIDO, amountWei, true, true);
+}
+
+async function executeBridgeEth(data) {
+  var BN = BigNumber;
+  var ethWeb3 = getEthWeb3ForWizard();
+  if (!ethWeb3) throw new Error('Ethereum RPC unavailable');
+  var amountWei = new BN(data.amountsWei.stableETH).plus(new BN(data.amountsWei.bayETH)).plus(new BN(data.amountsWei.bayrETH));
+  if (amountWei.lte(0)) return;
+  var autobridge = new ethWeb3.eth.Contract(autoBridgev0ABI, WIZARD_AUTOBRIDGE_V0);
+  await sendTx(autobridge, "bridgeETH", [myaccounts], 300000, amountWei.toFixed(0, BN.ROUND_DOWN), true, true, false);
+}
+
+async function swapWethToTokenOnPolygon(amountInWei, tokenOut, minOutWei) {
+  var polWeb3 = getPolWeb3ForWizard();
+  if (!polWeb3) throw new Error('Polygon RPC unavailable');
+  var router = new polWeb3.eth.Contract(RouterABI, WIZARD_ROUTER_POLYGON);
+  await ensureTokenAllowance(polWeb3, TREASURY_ADDRESSES.WETH, WIZARD_ROUTER_POLYGON, amountInWei, false);
+  var deadline = Math.floor(Date.now() / 1000) + 300;
+  var path = [TREASURY_ADDRESSES.WETH, tokenOut];
+  await sendTx(router, "swapExactTokensForTokens", [amountInWei, minOutWei, path, myaccounts, deadline, WIZARD_EXCHANGE_POLYGON], 5000000, "0", true, false, true);
+}
+
+async function executeStableVaultPath(data) {
+  var BN = BigNumber;
+  var amountInWei = data.amountsWei.stableETH;
+  if (!amountInWei || new BN(amountInWei).lte(0)) return;
+  var polWeb3 = getPolWeb3ForWizard();
+  if (!polWeb3) throw new Error('Polygon RPC unavailable');
+  var daiContract = new polWeb3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.DAI);
+  var preDai = validation(DOMPurify.sanitize(await daiContract.methods.balanceOf(myaccounts).call()));
+
+  var quotedDaiOut = new BN(data.breakdown.stableETH).times(data.prices.eth).times('1e18');
+  var minDaiOut = quotedDaiOut.times(0.9).toFixed(0, BN.ROUND_DOWN);
+  await swapWethToTokenOnPolygon(amountInWei, TREASURY_ADDRESSES.DAI, minDaiOut);
+
+  var postDai = validation(DOMPurify.sanitize(await daiContract.methods.balanceOf(myaccounts).call()));
+  var received = new BN(postDai).minus(new BN(preDai));
+  if (received.lt(new BN(minDaiOut))) {
+    throw new Error('StableVault swap slippage exceeded tolerance');
+  }
+
+  data.tracked.stableDaiReceivedWei = received.toFixed(0, BN.ROUND_DOWN);
+  setWizardData(data);
+  var stableContract = new polWeb3.eth.Contract(stableVaultABI, TREASURY_ADDRESSES.STABLE_POOL);
+  await ensureTokenAllowance(polWeb3, TREASURY_ADDRESSES.DAI, TREASURY_ADDRESSES.STABLE_POOL, data.tracked.stableDaiReceivedWei, false);
+  var deadline = Math.floor(Date.now() / 1000) + 300;
+  await sendTx(stableContract, "deposit", [data.tracked.stableDaiReceivedWei, deadline], 2000000, "0", true, false, false);
+}
+
+async function executeBaySwapPath(data, isBayr) {
+  var BN = BigNumber;
+  var amountEthKey = isBayr ? 'bayrETH' : 'bayETH';
+  var amountInWei = data.amountsWei[isBayr ? 'bayrETH' : 'bayETH'];
+  if (!amountInWei || new BN(amountInWei).lte(0)) return;
+  var tokenOut = isBayr ? BAYRaddy : BAYLaddy;
+  if (!tokenOut) throw new Error('BAY token address unavailable');
+
+  var polWeb3 = getPolWeb3ForWizard();
+  if (!polWeb3) throw new Error('Polygon RPC unavailable');
+  var tokenContract = new polWeb3.eth.Contract(ERC20ABI, tokenOut);
+  var preBal = validation(DOMPurify.sanitize(await tokenContract.methods.balanceOf(myaccounts).call()));
+  var quotePrice = isBayr ? data.prices.bayr : data.prices.bay;
+  var expectedOut = new BN(data.breakdown[amountEthKey]).times(data.prices.eth).dividedBy(quotePrice).times('1e8');
+  var minOut = expectedOut.times(0.9).toFixed(0, BN.ROUND_DOWN);
+  await swapWethToTokenOnPolygon(amountInWei, tokenOut, minOut);
+  var postBal = validation(DOMPurify.sanitize(await tokenContract.methods.balanceOf(myaccounts).call()));
+  var received = new BN(postBal).minus(new BN(preBal));
+  if (received.lt(new BN(minOut))) {
+    throw new Error('BAY swap slippage exceeded tolerance');
+  }
+}
+
+async function hasExpectedEthDeposit(data) {
+  var BN = BigNumber;
+  var ethWeb3 = getEthWeb3ForWizard();
+  if (!ethWeb3) return false;
+  var current = validation(DOMPurify.sanitize(await ethWeb3.eth.getBalance(myaccounts)));
+  var startBal = data.startEthBalanceWei || "0";
+  var target = new BN(data.ethAmount).times('1e18').toFixed(0, BN.ROUND_DOWN);
+  return new BN(current).minus(new BN(startBal)).gte(new BN(target));
+}
+
+async function waitForPolygonFunding(data) {
+  var BN = BigNumber;
+  var polWeb3 = getPolWeb3ForWizard();
+  if (!polWeb3) return false;
+  var expectedWeth = new BN(data.amountsWei.stableETH).plus(new BN(data.amountsWei.bayETH)).plus(new BN(data.amountsWei.bayrETH));
+  var wethContract = new polWeb3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.WETH);
+  var currentWeth = new BN(validation(DOMPurify.sanitize(await wethContract.methods.balanceOf(myaccounts).call())));
+  if (currentWeth.lt(expectedWeth)) return false;
+  if (data.choices.pol) {
+    var polBalance = new BN(validation(DOMPurify.sanitize(await polWeb3.eth.getBalance(myaccounts))));
+    if (polBalance.lt(new BN(WIZARD_MIN_POL_GAS_WEI))) return false;
+  }
+  return true;
+}
+
+async function executeWizardAutomationTick() {
+  if (wizardExecutorBusy) return;
+  wizardExecutorBusy = true;
+  try {
+    var data = getWizardData();
+    if (!data || !data.status || isTerminalStatus(data.status)) return;
+    if (!myaccounts || data.account.toLowerCase() !== myaccounts.toLowerCase()) return;
+    if (loginType !== 2) return;
+    data = ensureWizardAmounts(data);
+    if (!data || !data.status) return;
+
+    if (data.status === WIZARD_STATUSES.pending) {
+      if (await hasExpectedEthDeposit(data)) {
+        setWizardStatus(WIZARD_STATUSES.ethReceived);
+      }
+      return;
+    }
+
+    if (data.status === WIZARD_STATUSES.ethReceived) {
+      if (data.choices.pol) setWizardStatus(WIZARD_STATUSES.taskPolSwap);
+      else if (data.choices.lido) setWizardStatus(WIZARD_STATUSES.taskLido);
+      else if (data.choices.stable || data.choices.bay || data.choices.bayr) setWizardStatus(WIZARD_STATUSES.taskEthBridge);
+      else setWizardStatus(WIZARD_STATUSES.completed);
+      return;
+    }
+
+    if (data.status === WIZARD_STATUSES.taskPolSwap) {
+      var polReceived = await executePolSwapEth(data);
+      data = setWizardStatus(WIZARD_STATUSES.taskPolBridge);
+      data.tracked.polReceivedWei = polReceived;
+      setWizardData(data);
+      return;
+    }
+
+    if (data.status === WIZARD_STATUSES.taskPolBridge) {
+      await executeBridgePolEth(data);
+      if (data.choices.lido) setWizardStatus(WIZARD_STATUSES.taskLido);
+      else if (data.choices.stable || data.choices.bay || data.choices.bayr) setWizardStatus(WIZARD_STATUSES.taskEthBridge);
+      else setWizardStatus(WIZARD_STATUSES.completed);
+      return;
+    }
+
+    if (data.status === WIZARD_STATUSES.taskLido) {
+      await executeLidoDeposit(data);
+      if (data.choices.stable || data.choices.bay || data.choices.bayr) setWizardStatus(WIZARD_STATUSES.taskEthBridge);
+      else setWizardStatus(WIZARD_STATUSES.completed);
+      return;
+    }
+
+    if (data.status === WIZARD_STATUSES.taskEthBridge) {
+      await executeBridgeEth(data);
+      setWizardStatus(WIZARD_STATUSES.taskWaitPolygonFunds);
+      return;
+    }
+
+    if (data.status === WIZARD_STATUSES.taskWaitPolygonFunds) {
+      var ready = await waitForPolygonFunding(data);
+      if (!ready) return;
+      if (data.choices.stable) setWizardStatus(WIZARD_STATUSES.taskStable);
+      else if (data.choices.bay) setWizardStatus(WIZARD_STATUSES.taskBay);
+      else if (data.choices.bayr) setWizardStatus(WIZARD_STATUSES.taskBayr);
+      else setWizardStatus(WIZARD_STATUSES.completed);
+      return;
+    }
+
+    if (data.status === WIZARD_STATUSES.taskStable) {
+      await executeStableVaultPath(data);
+      if (data.choices.bay) setWizardStatus(WIZARD_STATUSES.taskBay);
+      else if (data.choices.bayr) setWizardStatus(WIZARD_STATUSES.taskBayr);
+      else setWizardStatus(WIZARD_STATUSES.completed);
+      return;
+    }
+
+    if (data.status === WIZARD_STATUSES.taskBay) {
+      await executeBaySwapPath(data, false);
+      if (data.choices.bayr) setWizardStatus(WIZARD_STATUSES.taskBayr);
+      else setWizardStatus(WIZARD_STATUSES.completed);
+      return;
+    }
+
+    if (data.status === WIZARD_STATUSES.taskBayr) {
+      await executeBaySwapPath(data, true);
+      setWizardStatus(WIZARD_STATUSES.completed);
+      return;
+    }
+  } catch(e) {
+    console.log('Wizard automation executor error:', e);
+    if (!isNetworkIssueError(e)) {
+      setWizardStatus(WIZARD_STATUSES.failed, { failureReason: String(e && e.message ? e.message : e) });
+    }
+  } finally {
+    wizardExecutorBusy = false;
+  }
+}
+
+function startWizardExecutor() {
+  if (wizardExecutorInterval) clearInterval(wizardExecutorInterval);
+  wizardExecutorInterval = setInterval(function() {
+    executeWizardAutomationTick().catch(function(err) {
+      console.log('Wizard executor interval error:', err);
+    });
+  }, 15000);
+  executeWizardAutomationTick().catch(function(err) {
+    console.log('Wizard executor startup error:', err);
+  });
+}
+
 function showAutomationBanner() {
   var existing = document.getElementById('wizardAutomationBanner');
   if (existing) existing.remove();
   var data = getWizardData();
-  if (!data || data.status !== 'pending') return;
+  if (!data) return;
 
   var banner = document.createElement('div');
   banner.id = 'wizardAutomationBanner';
   banner.style.cssText = 'background:#1a3a5c;color:#fff;padding:10px 16px;margin:10px 0;border-radius:6px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;';
-  banner.innerHTML = '<span>⏳ ' + translateThis('Ethereum automation in process...') + '</span>' +
-    '<button id="wizardShowBtn" style="background:#fff;color:#1a3a5c;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:0.9em;">' + translateThis('Show') + '</button>';
+  var isTerminal = isTerminalStatus(data.status);
+  var icon = data.status === WIZARD_STATUSES.completed ? '✅' : (data.status === WIZARD_STATUSES.failed ? '❌' : '⏳');
+  var taskText = getCurrentTaskLabel(data.status);
+  banner.innerHTML = '<span>' + icon + ' ' + taskText + '</span>' +
+    '<button id="wizardShowBtn" style="background:#fff;color:#1a3a5c;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:0.9em;">' + (isTerminal ? translateThis('Details') : translateThis('Show')) + '</button>';
 
   var target = document.getElementById('buyBitbaySwapField');
   if (target) {
@@ -590,8 +998,9 @@ function showAutomationBanner() {
     e.stopPropagation();
     var d = getWizardData();
     if (!d) return;
+    var terminal = isTerminalStatus(d.status);
     var info = '<div style="text-align:left;font-size:0.9em;">';
-    info += '<p><strong>' + translateThis('Status') + ':</strong> ' + translateThis('Waiting for ETH deposit') + '</p>';
+    info += '<p><strong>' + translateThis('Status') + ':</strong> ' + getCurrentTaskLabel(d.status) + '</p>';
     info += '<p><strong>' + translateThis('Amount') + ':</strong> ' + d.ethAmount.toFixed(6) + ' ETH (~$' + (d.ethAmount * d.prices.eth).toFixed(2) + ')</p>';
     info += '<p><strong>' + translateThis('Address') + ':</strong> <span id="wizStatusAddr" style="font-family:monospace;font-size:0.85em;word-break:break-all;"></span></p>';
     var tasks = [];
@@ -601,6 +1010,12 @@ function showAutomationBanner() {
     if (d.choices.bay) tasks.push('🪙 ' + translateThis('Buy BAY'));
     if (d.choices.bayr) tasks.push('🏛️ ' + translateThis('Buy BAYR'));
     info += '<p><strong>' + translateThis('Tasks') + ':</strong> ' + tasks.join(', ') + '</p>';
+    if (d.tracked && d.tracked.polReceivedWei && d.tracked.polReceivedWei !== "0") {
+      info += '<p><strong>' + translateThis('POL received (wei)') + ':</strong> ' + d.tracked.polReceivedWei + '</p>';
+    }
+    if (d.failureReason) {
+      info += '<p><strong>' + translateThis('Failure reason') + ':</strong> ' + DOMPurify.sanitize(d.failureReason) + '</p>';
+    }
     info += '</div>';
 
     var r = await Swal.fire({
@@ -608,7 +1023,7 @@ function showAutomationBanner() {
       html: info,
       showCancelButton: true,
       confirmButtonText: translateThis('OK'),
-      cancelButtonText: translateThis('Cancel Automation'),
+      cancelButtonText: terminal ? translateThis('Clear') : translateThis('Cancel Automation'),
       cancelButtonColor: '#d33',
       didOpen: function() {
         var addrEl = document.getElementById('wizStatusAddr');
@@ -616,6 +1031,12 @@ function showAutomationBanner() {
       }
     });
     if (r.dismiss === Swal.DismissReason.cancel) {
+      if (terminal) {
+        clearWizardData();
+        var bannerEl = document.getElementById('wizardAutomationBanner');
+        if (bannerEl) bannerEl.remove();
+        return;
+      }
       var confirmCancel = await Swal.fire({
         title: translateThis('Cancel Automation?'),
         text: translateThis('Your ETH will simply remain in your account if you cancel.'),
@@ -626,8 +1047,8 @@ function showAutomationBanner() {
       });
       if (confirmCancel.isConfirmed) {
         clearWizardData();
-        var bannerEl = document.getElementById('wizardAutomationBanner');
-        if (bannerEl) bannerEl.remove();
+        var bannerEl2 = document.getElementById('wizardAutomationBanner');
+        if (bannerEl2) bannerEl2.remove();
       }
     }
   });
@@ -637,8 +1058,9 @@ window.checkAutomationOnLogin = async function() {
   if (!myaccounts || loginType === 0) return;
 
   var data = getWizardData();
-  if (data && data.status === 'pending') {
+  if (data) {
     showAutomationBanner();
+    if (!isTerminalStatus(data.status)) startWizardExecutor();
     if (loginType === 1) {
       await Swal.fire({
         title: translateThis('Automation Tasks Pending'),
@@ -693,8 +1115,9 @@ window.addEventListener('load', function() {
   setTimeout(function() {
     if (myaccounts && loginType !== 0) {
       var data = getWizardData();
-      if (data && data.status === 'pending') {
+      if (data) {
         showAutomationBanner();
+        if (!isTerminalStatus(data.status)) startWizardExecutor();
       }
     }
   }, 5000);
