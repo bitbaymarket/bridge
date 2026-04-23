@@ -32,7 +32,9 @@ const TREASURY_ADDRESSES = {
   
   // Ethereum Network
   LIDO_VAULT: '0x618B4dBf7d071d3Eb4281DfDb484606C55c5f1d1',
-  LIDO_STETH: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84'
+  LIDO_STETH: '0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84',
+  ETH_DAI:    '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+  ETH_POL:    '0x455e53CBB86018Ac2B8092FdCd39d8444aFFC3F6'
 };
 
 // ============================================================================
@@ -86,7 +88,8 @@ function resetEarnState() {
   // Balance displays (spans) - reset to "0.0"
   const balanceElements = [
     'ethBalance', 'lidoBalance', 'vaultBaylBalance', 'vaultBayrBalance', 
-    'daiBalanceAmount', 'usdcBalanceAmount', 'wethBalanceAmount', 'polBalanceAmount'
+    'daiBalanceAmount', 'usdcBalanceAmount', 'wethBalanceAmount', 'polBalanceAmount',
+    'ethDaiBalance', 'ethPolBalance'
   ];
   balanceElements.forEach(id => {
     const el = document.getElementById(id);
@@ -859,6 +862,36 @@ async function loadETHBalances() {
       document.getElementById('lidoBalance').textContent = stETHBalanceETH;
       document.getElementById('lidoBalanceField').classList.remove('hidden');
       balances.SETH = stETHBalanceETH;
+    }
+
+    // Get DAI balance on Ethereum (may appear if automation bridged assets were stuck)
+    const ethDaiContract = new earnState.ethWeb3.eth.Contract(
+      [{"constant": true, "inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "type": "function"}],
+      TREASURY_ADDRESSES.ETH_DAI
+    );
+    const ethDaiBalance = validation(DOMPurify.sanitize(await ethDaiContract.methods.balanceOf(myaccounts).call()));
+    if (new BN(ethDaiBalance).gt(new BN('0'))) {
+      const ethDaiFormatted = formatDAIAmount(ethDaiBalance, 4);
+      document.getElementById('ethDaiBalance').textContent = ethDaiFormatted;
+      document.getElementById('ethDaiBalanceField').classList.remove('hidden');
+      balances.ETH_DAI = ethDaiFormatted;
+    } else {
+      document.getElementById('ethDaiBalanceField').classList.add('hidden');
+    }
+
+    // Get POL balance on Ethereum (may appear if automation bridged assets were stuck)
+    const ethPolContract = new earnState.ethWeb3.eth.Contract(
+      [{"constant": true, "inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "type": "function"}],
+      TREASURY_ADDRESSES.ETH_POL
+    );
+    const ethPolBalance = validation(DOMPurify.sanitize(await ethPolContract.methods.balanceOf(myaccounts).call()));
+    if (new BN(ethPolBalance).gt(new BN('0'))) {
+      const ethPolFormatted = formatETHAmount(ethPolBalance, 4);
+      document.getElementById('ethPolBalance').textContent = ethPolFormatted;
+      document.getElementById('ethPolBalanceField').classList.remove('hidden');
+      balances.ETH_POL = ethPolFormatted;
+    } else {
+      document.getElementById('ethPolBalanceField').classList.add('hidden');
     }
 
     if (Object.keys(balances).length > 0) {
@@ -3394,7 +3427,7 @@ async function copyDepositAddress(coinType) {
           ${address}
         </p>
         <p style="margin-top: 10px; font-size: 0.9em; color: #777;">
-          ${coinType === 'ETH' || coinType === 'Lido' ? translateThis('Network: Ethereum Mainnet') : translateThis('Network: Polygon')}
+          ${coinType === 'ETH' || coinType === 'Lido' || coinType === 'DAI-Ethereum' || coinType === 'POL-Ethereum' ? translateThis('Network: Ethereum Mainnet') : translateThis('Network: Polygon')}
         </p>
       `,
       icon: 'success',
@@ -3408,7 +3441,7 @@ async function copyDepositAddress(coinType) {
           ${address}
         </p>
         <p style="margin-top: 10px; font-size: 0.9em; color: #777;">
-          ${coinType === 'ETH' || coinType === 'Lido' ? translateThis('Network: Ethereum Mainnet') : translateThis('Network: Polygon')}
+          ${coinType === 'ETH' || coinType === 'Lido' || coinType === 'DAI-Ethereum' || coinType === 'POL-Ethereum' ? translateThis('Network: Ethereum Mainnet') : translateThis('Network: Polygon')}
         </p>
       `,
       icon: 'info',
@@ -3486,6 +3519,28 @@ async function showWithdrawDialog() {
       const stETHBalanceFormatted = new BN(stETHBalance).dividedBy('1e18');
       if (stETHBalanceFormatted.gt(new BN('0'))) {
         balances.push({ coin: 'stETH (Lido)', balance: stripZeros(stETHBalanceFormatted.toFixed(8, BN.ROUND_DOWN)), network: 'Ethereum' });
+      }
+
+      // Check DAI balance on Ethereum (may appear if automation bridging was incomplete)
+      const ethDaiContract = new earnState.ethWeb3.eth.Contract(
+        [{"constant": true, "inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "type": "function"}],
+        TREASURY_ADDRESSES.ETH_DAI
+      );
+      const ethDaiBalance = validation(DOMPurify.sanitize(await ethDaiContract.methods.balanceOf(myaccounts).call()));
+      const ethDaiFormatted = new BN(ethDaiBalance).dividedBy('1e18');
+      if (ethDaiFormatted.gt(new BN('0'))) {
+        balances.push({ coin: 'DAI (Ethereum)', balance: stripZeros(ethDaiFormatted.toFixed(8, BN.ROUND_DOWN)), network: 'Ethereum' });
+      }
+
+      // Check POL balance on Ethereum (may appear if automation bridging was incomplete)
+      const ethPolContract = new earnState.ethWeb3.eth.Contract(
+        [{"constant": true, "inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "type": "function"}],
+        TREASURY_ADDRESSES.ETH_POL
+      );
+      const ethPolBalance = validation(DOMPurify.sanitize(await ethPolContract.methods.balanceOf(myaccounts).call()));
+      const ethPolFormatted = new BN(ethPolBalance).dividedBy('1e18');
+      if (ethPolFormatted.gt(new BN('0'))) {
+        balances.push({ coin: 'POL (Ethereum)', balance: stripZeros(ethPolFormatted.toFixed(8, BN.ROUND_DOWN)), network: 'Ethereum' });
       }
     }
     
@@ -3587,6 +3642,7 @@ async function executeWithdrawal(withdrawData) {
     } else {
       // Withdraw ERC20 token
       let tokenAddress, decimals, web3Instance;
+      let requiresEthNetwork = false;
       if (coin.coin === 'USDC') {
         tokenAddress = TREASURY_ADDRESSES.USDC;
         decimals = '1e6';
@@ -3603,6 +3659,17 @@ async function executeWithdrawal(withdrawData) {
         tokenAddress = TREASURY_ADDRESSES.LIDO_STETH;
         decimals = '1e18';
         web3Instance = earnState.ethWeb3;
+        requiresEthNetwork = true;
+      } else if (coin.coin === 'DAI (Ethereum)') {
+        tokenAddress = TREASURY_ADDRESSES.ETH_DAI;
+        decimals = '1e18';
+        web3Instance = earnState.ethWeb3;
+        requiresEthNetwork = true;
+      } else if (coin.coin === 'POL (Ethereum)') {
+        tokenAddress = TREASURY_ADDRESSES.ETH_POL;
+        decimals = '1e18';
+        web3Instance = earnState.ethWeb3;
+        requiresEthNetwork = true;
       }
       const tokenContract = new web3Instance.eth.Contract(
         [{"constant": false, "inputs": [{"name": "recipient", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "transfer", "outputs": [{"name": "", "type": "bool"}], "type": "function"},
@@ -3611,7 +3678,7 @@ async function executeWithdrawal(withdrawData) {
       );
       const balance = validation(DOMPurify.sanitize(await tokenContract.methods.balanceOf(myaccounts).call()));
       const amountWei = amount ? new BN(amount).times(decimals).toFixed(0, BN.ROUND_DOWN) : balance;
-      if(coin.coin === 'stETH (Lido)') {
+      if (requiresEthNetwork) {
         await sendTx(tokenContract, "transfer", [address, amountWei], 150000, "0", true, false, true);
       } else {
         await sendTx(tokenContract, "transfer", [address, amountWei], 150000, "0", true, false);
