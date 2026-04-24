@@ -173,11 +173,12 @@
             <img class="swapSelectorLogo uil uil-link" src="./assets/images/buy.png">
             <div class="swapSelectorText">&nbsp&nbsp&nbsp&nbsp&nbspBuy BitBay&nbsp&nbsp&nbsp&nbsp&nbsp</div>
       </div><br>
+      <!--
       <div class=" swapSelector btn login_btn" onclick="launchAutomationWizard()">
             <span class="no-invert">🪄</span>
             <div class="swapSelectorText">&nbspLaunch Wizard&nbsp</div>
       </div>
-
+      -->
       <!-- ROI Notification for Home Page (shows before login) -->
       <div class="callout callout-success hidden" id="homeRoiNotification" style="margin-top: 10px; text-align: center; font-size: 16px;">
         📈 Calculating ROI...
@@ -788,7 +789,7 @@
                           </select>
                         </div>
                         <div class="swapField" style="display: flex; gap: 10px;">
-                          <button class="swapSelector btn" style="flex: 1;" onclick="depositStableVault()">Deposit</button>
+                          <button class="swapSelector btn" style="flex: 1;" disabled onclick="depositStableVault()">Deposit</button>
                           <button class="swapSelector btn" style="flex: 1;" onclick="collectStableFees()">Collect Fees</button>
                           <button class="swapSelector btn" style="flex: 1;" onclick="withdrawStableVault()">Withdraw</button>
                         </div>

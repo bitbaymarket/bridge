@@ -634,6 +634,7 @@ function showAutomationBanner() {
 }
 
 window.checkAutomationOnLogin = async function() {
+  if(true) return;
   if (!myaccounts || loginType === 0) return;
 
   var data = getWizardData();
