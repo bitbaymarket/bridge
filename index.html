@@ -1211,6 +1211,15 @@
 <script type="text/javascript" src="./assets/js/bridge-tools/web3.min.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/bignumber.min.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/merkletree.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/coin.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/crypto-sha256.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/jsbn.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/chartist.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/chartist-plugin-tooltip.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/purify.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/sweetalert211.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/zxcvbn.js"></script>
+
 <script type="text/javascript" src="./assets/js/bridge-tools/auto-trade.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/BAYL.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/BAYR.js"></script>
@@ -1225,27 +1234,18 @@
 <script type="text/javascript" src="./assets/js/bridge-tools/Pair.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/WETH.js"></script>
 
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Treasury.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Vault.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/LidoVault.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVault.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVaultFees.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StakingVote.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/flow.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/earn.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/wizard.js"></script>
-
-<script type="text/javascript" src="./assets/js/bridge-tools/coin.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/crypto-sha256.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/jsbn.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/chartist.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/chartist-plugin-tooltip.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/purify.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/sweetalert211.js"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/zxcvbn.js"></script>
-<script type="text/javascript" src="./rotating-provider.js"></script>
-<script type="text/javascript" src="./translate.js"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Treasury.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Vault.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/LidoVault.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVault.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVaultFees.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StakingVote.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/flow.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/earn.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/wizard.js?v=1"></script>
+<script type="text/javascript" src="./rotating-provider.js?v=1"></script>
+<script type="text/javascript" src="./translate.js?v=1"></script>
 
 <style>
   .swal2-header {
@@ -2272,6 +2272,32 @@ var rotatingProvider = new RotatingProvider(1); //window.RPCState.providers.pref
 var CUSTOM_POLYGON_RPC = null;
 var CUSTOM_ETHEREUM_RPC = null;
 var DEFAULT_ETHEREUM_RPC = "https://eth.drpc.org/";
+var version = 1;
+(async function checkVersion() {
+  const INTERVAL = 10 * 60 * 1000;
+  const last = parseInt(localStorage.getItem('lastVersionCheck') || '0', 10);
+  const elapsed = Date.now() - last;  
+  if (elapsed < INTERVAL) {
+    setTimeout(checkVersion, INTERVAL - elapsed);
+    return;
+  }  
+  try {
+    const res = await fetch(`/version.txt?t=${Date.now()}`, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' }
+    });
+    if (res.ok) {
+      const remoteVersion = parseInt((await res.text()).trim(), 10);
+      if (!isNaN(remoteVersion) && remoteVersion > version) {
+        localStorage.setItem('lastVersionCheck', Date.now());
+        setTimeout(() => window.location.reload(), 500);
+        return;
+      }
+    }
+  } catch (e) {}
+  localStorage.setItem('lastVersionCheck', Date.now());
+  setTimeout(checkVersion, INTERVAL);
+})();
 
 // Load custom RPC settings from localStorage
 function loadRpcSettings() {
