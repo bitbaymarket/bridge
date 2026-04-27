@@ -276,7 +276,8 @@ contract FeeVault {
 }
 
 contract UsdcDaiV4Vault is IUnlockCallback {
-    IStateView public immutable stateView;
+    IStateView immutable stateView;
+    IPoolManager immutable poolManager;
 
     uint8 internal constant ACTION_DEPOSIT = 0x00;
     uint8 internal constant ACTION_WITHDRAW = 0x01;
@@ -292,7 +293,6 @@ contract UsdcDaiV4Vault is IUnlockCallback {
     IERC20 immutable DAI;
     IERC20 immutable USDC;
     IERC20 immutable USDT;
-    IPoolManager immutable poolManager;
     address public immutable treasury;
 
     PoolKey poolKey;
@@ -682,7 +682,6 @@ contract UsdcDaiV4Vault is IUnlockCallback {
         }
         if (newLiquidity > 0) {
             _modifyLiquidity(tl, tu, int128(newLiquidity));
-
             if (liquidity == 0) {
                 tickLower = tl;
                 tickUpper = tu;
@@ -1002,10 +1001,8 @@ contract UsdcDaiV4Vault is IUnlockCallback {
     function getUnclaimedFees() external view returns (uint256 fee0, uint256 fee1) {
         if (liquidity == 0) return (0, 0);
         bytes32 poolId = keccak256(abi.encode(poolKey));
-        
         (uint256 feeGrowthInside0X128, uint256 feeGrowthInside1X128) = stateView.getFeeGrowthInside(poolId, tickLower, tickUpper);
         (, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128) = stateView.getPositionInfo(poolId, address(this), tickLower, tickUpper, salt);
-        
         unchecked {
             fee0 = uint256(liquidity) * (feeGrowthInside0X128 - feeGrowthInside0LastX128) / (1 << 128);
             fee1 = uint256(liquidity) * (feeGrowthInside1X128 - feeGrowthInside1LastX128) / (1 << 128);
