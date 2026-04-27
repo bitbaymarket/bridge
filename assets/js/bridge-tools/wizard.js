@@ -698,7 +698,7 @@ window.checkAutomationOnLogin = async function() {
   var data = getWizardData();
   if (data && data.status !== 'complete' && data.status !== 'failed') {
     showAutomationBanner();
-    if (loginType === 1 && data.status !== 'pending' && data.status !== 'awaiting_polygon') {
+    if (loginType === 1) {
       await Swal.fire({
         title: translateThis('Automation Tasks Pending'),
         html: '<div style="text-align:left;max-height:400px;overflow-y:auto;">' +
