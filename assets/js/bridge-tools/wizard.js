@@ -642,19 +642,27 @@ async function openAutomationStatusDialog() {
     rows += '<li style="padding:3px 0;list-style:none;">✅ ' + translateThis('Automation complete') + '</li>';
   }
 
+  // All values injected into the dialog go through validation()/BN sanitization
+  // (same pattern as earn.js / index.html) so nothing untrusted reaches the DOM.
   var BN = BigNumber;
+  var safeAccount = stripSafe(DOMPurify.sanitize(validation(d.account)));
+  var ethAmtStr   = new BN(Number(d.ethAmount) || 0).toFixed(6);
+  var ethUsdStr   = new BN(Number(d.ethAmount) || 0).times(Number(d.prices && d.prices.eth) || 0).toFixed(2);
   var info = '<div style="text-align:left;font-size:0.9em;">';
-  info += '<p><strong>' + translateThis('Amount') + ':</strong> ' + new BN(d.ethAmount).toFixed(6) + ' ETH (~$' + (new BN(d.ethAmount).times(d.prices.eth).toFixed(2)) + ')</p>';
-  info += '<p><strong>' + translateThis('Address') + ':</strong> <span style="font-family:monospace;font-size:0.85em;word-break:break-all;">' + DOMPurify.sanitize(d.account) + '</span></p>';
+  info += '<p><strong>' + translateThis('Amount') + ':</strong> ' + ethAmtStr + ' ETH (~$' + ethUsdStr + ')</p>';
+  info += '<p><strong>' + translateThis('Address') + ':</strong> <span style="font-family:monospace;font-size:0.85em;word-break:break-all;">' + safeAccount + '</span></p>';
   if (d.received && d.received.pol) {
-    info += '<p>' + translateThis('POL acquired') + ': ' + new BN(d.received.pol).dividedBy('1e18').toFixed(4) + '</p>';
+    var polStr = new BN(validation(d.received.pol) || '0').dividedBy('1e18').toFixed(4);
+    info += '<p>' + translateThis('POL acquired') + ': ' + polStr + '</p>';
   }
   if (d.received && d.received.dai) {
-    info += '<p>' + translateThis('DAI acquired') + ': ' + new BN(d.received.dai).dividedBy('1e18').toFixed(2) + '</p>';
+    var daiStr = new BN(validation(d.received.dai) || '0').dividedBy('1e18').toFixed(2);
+    info += '<p>' + translateThis('DAI acquired') + ': ' + daiStr + '</p>';
   }
   info += '<p><strong>' + translateThis('Progress') + ':</strong></p><ul style="padding-left:0;margin:0;">' + rows + '</ul>';
-  if (d.status === 'failed' && d.errorMessage) {
-    info += '<p style="color:#a33;margin-top:8px;"><strong>' + translateThis('Error') + ':</strong> ' + DOMPurify.sanitize(d.errorMessage) + '</p>';
+  if (d.status === 'failed') {
+    // Don't surface raw error text to the DOM; full error is in the console.
+    info += '<p style="color:#a33;margin-top:8px;">' + translateThis('An error occurred. Please check the browser console for details.') + '</p>';
   }
   info += '</div>';
 
@@ -807,6 +815,7 @@ var ETH_GAS_V3_SWAP    = 300000;
 var ETH_GAS_APPROVE    = 100000;
 var ETH_GAS_BRIDGE_ERC = 300000;
 var POLL_INTERVAL_MS   = 30000;    // 30s between balance polls
+var POLL_MAX_AWAIT_MS  = 6 * 60 * 60 * 1000; // 6h cap for Polygon-arrival wait
 // Require at least 0.3 POL on Polygon before running the polygon-side tasks
 var POL_GAS_RESERVE_WEI = '300000000000000000';
 
@@ -867,13 +876,6 @@ function isLastPolygonTask(choices, status) {
   return false;
 }
 
-function sanitizeErrMsg(e) {
-  try {
-    var m = (e && e.message) ? String(e.message) : String(e);
-    return m.slice(0, 300);
-  } catch (_) { return 'Unknown error'; }
-}
-
 function getEthWeb3Instance() {
   if (typeof earnState !== 'undefined' && earnState && earnState.ethWeb3) return earnState.ethWeb3;
   var rpc = typeof getEthereumRpc === 'function' ? getEthereumRpc() : 'https://eth.drpc.org/';
@@ -909,11 +911,11 @@ async function runAutomation() {
         showAutomationBanner();
         if (nextStatus === 'complete' || nextStatus === 'failed') break;
       } catch (e) {
+        // Full error stays in the console; we only persist `failedAt` for resume context.
         console.log('Automation step failed:', e);
         var d2 = getWizardData();
         if (d2) {
           d2.failedAt = d2.status;
-          d2.errorMessage = sanitizeErrMsg(e);
           d2.status = 'failed';
           setWizardData(d2);
           showAutomationBanner();
@@ -1121,9 +1123,15 @@ async function stepAwaitPolygon(data) {
   var prePol  = new BN((data.preArrival && data.preArrival.pol) || '0');
   var minPolReserve = new BN(POL_GAS_RESERVE_WEI);
 
+  // Bound the wait: the PoS bridge typically settles within ~30 min. Cap at
+  // POLL_MAX_AWAIT_MS so a stuck bridge fails cleanly instead of polling forever.
+  var startedAt = Date.now();
   while (true) {
     var cur = getWizardData();
     if (!cur || cur.status !== 'awaiting_polygon' || automationCancelled) return null;
+    if (Date.now() - startedAt > POLL_MAX_AWAIT_MS) {
+      throw new Error('Timed out waiting for funds to arrive on Polygon');
+    }
 
     try {
       var daiBal = new BN(validation(DOMPurify.sanitize(await daiPol.methods.balanceOf(myaccounts).call())));
