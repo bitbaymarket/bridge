@@ -1610,7 +1610,7 @@ async function checkPoolHealth() {
         title: translateThis('Pool Value Warning'),
         html: `
           <p><strong>${translateThis('Health')}: ${healthPercent}%</strong></p>
-          <p>${translateThis('The StableVault is currently under valued. This can happen if it repositions too frequently or when there is impermanent loss or changes in stablecoin prices.')}</p>          
+          <p>${translateThis('The StableVault is currently under valued. This can happen if it repositions too frequently or when there is impermanent loss or changes in stablecoin prices.')}</p>
           <p>${translateThis('The total liquidity plus dust is less than the total shares by more than 2%. Depositing now effectively pays off this debt and may result in immediate loss of value.')}</p>
         `,
         icon: 'warning',
@@ -1695,7 +1695,7 @@ async function withdrawStableVault() {
     //Only compact dust if there is enough to avoid USDC slippage truncation
     const daiTokenDust = new earnState.polWeb3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.DAI);
     const daiDust = validation(DOMPurify.sanitize(await daiTokenDust.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL).call()));
-    const addDust = new BN(daiDust).gt(new BN('10000000000000000'));
+    const addDust = new BN(daiDust).gt(new BN('100000000000000000'));
     await sendTx(stableContract, "withdraw", [withdrawShares.toString(), deadline, addDust], 1000000, "0", true, false);
     
     hideSpinner();
@@ -2342,21 +2342,13 @@ async function checkAndManageStableVault() {
           logToConsole('StableVault repositioned successfully: ' + tx);
         }
       }
-      
-      // Check if dust needs cleaning
-      const lastDustClean = parseInt(validation(DOMPurify.sanitize(await stableContract.methods.lastDustClean().call())));
-      const cleanTimelock = parseInt(validation(DOMPurify.sanitize(await stableContract.methods.CLEAN_TIMELOCK().call())));
-      now = Math.floor(Date.now() / 1000);
-      
-      if (now - lastDustClean > cleanTimelock) {        
-        const USDCToken = new earnState.polWeb3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.USDC);
-        const USDCBalance = validation(DOMPurify.sanitize(await USDCToken.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL).call()));
-        if (new BN(USDCBalance).gt(new BN('1000000'))) {
-          logToConsole('Cleaning StableVault dust...');
-          const deadline = now + 300;
-          const tx = await sendTx(stableContract, "cleanDust", [deadline], 1500000, "0", false, false, false);        
-          logToConsole('StableVault dust cleaned successfully: ' + tx);
-        }
+      const USDCToken = new earnState.polWeb3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.USDC);
+      const USDCBalance = validation(DOMPurify.sanitize(await USDCToken.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL).call()));
+      if (new BN(USDCBalance).gt(new BN('2000000'))) {
+        logToConsole('Cleaning StableVault dust...');
+        const deadline = now + 300;
+        const tx = await sendTx(stableContract, "cleanDust", [deadline], 1500000, "0", false, false, false);        
+        logToConsole('StableVault dust cleaned successfully: ' + tx);
       }
     }
     

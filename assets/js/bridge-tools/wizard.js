@@ -1051,8 +1051,9 @@ async function stepLido(data) {
   // contract minimum may exceed what the user wants and will be enforced on-chain
   // if the user picks too small. We respect the user's choice as-is below maxdays.
   var maxDays = parseInt(validation(DOMPurify.sanitize(await lidoContract.methods.maxdays().call())));
+  var minDays = parseInt(validation(DOMPurify.sanitize(await lidoContract.methods.mindays().call())));
   var days = parseInt(data.choices.lidoDays);
-  if (isNaN(days) || days <= 0) days = maxDays; // sensible default if not provided
+  if (isNaN(days) || days <= 0) days = minDays; // sensible default if not provided
   if (!isNaN(maxDays) && days > maxDays) days = maxDays;
 
   // Slippage 500 bps (5%), false = do not autocompound (matches earn.js semantics)
