@@ -735,6 +735,26 @@
                           </div>
                           <button class="btn-small" onclick="copyDepositAddress('Lido')" title="Copy deposit address" style="padding: 5px 10px;">📋</button>
                         </div>
+                        <div id="ethDaiBalanceField" class="hidden" style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #f5f5f5; border-radius: 5px; margin-top: 10px;">
+                          <div style="display: flex; align-items: center; gap: 10px;">
+                            <img class="swapSelectorLogo" src="./assets/images/eth.png" style="width: 24px; height: 24px; filter: hue-rotate(40deg);">
+                            <div>
+                              <div style="font-size: 0.9em; color: #777;">DAI (Ethereum)</div>
+                              <div style="font-weight: bold;"><span id="ethDaiBalance">0.0</span></div>
+                            </div>
+                          </div>
+                          <button class="btn-small" onclick="copyDepositAddress('DAI-Ethereum')" title="Copy deposit address" style="padding: 5px 10px;">📋</button>
+                        </div>
+                        <div id="ethPolBalanceField" class="hidden" style="display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #f5f5f5; border-radius: 5px; margin-top: 10px;">
+                          <div style="display: flex; align-items: center; gap: 10px;">
+                            <img class="swapSelectorLogo" src="./assets/images/eth.png" style="width: 24px; height: 24px; filter: hue-rotate(280deg);">
+                            <div>
+                              <div style="font-size: 0.9em; color: #777;">POL (Ethereum)</div>
+                              <div style="font-weight: bold;"><span id="ethPolBalance">0.0</span></div>
+                            </div>
+                          </div>
+                          <button class="btn-small" onclick="copyDepositAddress('POL-Ethereum')" title="Copy deposit address" style="padding: 5px 10px;">📋</button>
+                        </div>
                       </div>
                     </div>
 
