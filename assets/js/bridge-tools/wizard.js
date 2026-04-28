@@ -222,6 +222,16 @@ window.launchAutomationWizard = async function() {
     return;
   }
 
+  // If an automation is already in progress, defer to the status panel rather
+  // than starting a new wizard. Completed/failed runs fall through to a fresh
+  // wizard so the user can clear and start again from the same button.
+  var existing = getWizardData();
+  if (existing && existing.status !== 'complete' && existing.status !== 'failed') {
+    showAutomationBanner();
+    await openAutomationStatusDialog();
+    return;
+  }
+
   var unlocked = await ensureWalletUnlocked();
   if (!unlocked) return;
 
@@ -814,7 +824,8 @@ var POL_BAY_EXCHANGE = '0x9e5A52f57b3038F1B8EeE45F28b3C1967e22799C';
 var ETH_GAS_V3_SWAP    = 300000;
 var ETH_GAS_APPROVE    = 100000;
 var ETH_GAS_BRIDGE_ERC = 300000;
-var POLL_INTERVAL_MS   = 30000;    // 30s between balance polls
+var POLL_INTERVAL_MS   = 120000;   // 2 min between balance polls (kept above
+                                   // earn/index refresh cadence to avoid contention)
 var POLL_MAX_AWAIT_MS  = 6 * 60 * 60 * 1000; // 6h cap for Polygon-arrival wait
 // Require at least 0.3 POL on Polygon before running the polygon-side tasks
 var POL_GAS_RESERVE_WEI = '300000000000000000';
@@ -874,6 +885,21 @@ function isLastPolygonTask(choices, status) {
   if (choices.bay)    return status === 'buying_bay';
   if (choices.stable) return status === 'stable_deposit';
   return false;
+}
+
+// Returns the wei amount to actually use for a step given anticipated vs actual
+// available balance. Within the prior 10% slippage/gas tolerance we proceed with
+// what's there; otherwise we treat it as a timeout/short condition.
+function adjustInputAmount(anticipated, balance) {
+  var a = new BigNumber(anticipated);
+  var b = new BigNumber(balance);
+  if (a.lte(0)) return '0';
+  if (b.gte(a)) return a.toFixed(0);
+  var floor = a.times('90').dividedBy('100').integerValue(BigNumber.ROUND_DOWN);
+  if (b.lt(floor)) {
+    throw new Error('Timed out waiting for funds or balance is below target. Please check your account history.');
+  }
+  return b.toFixed(0);
 }
 
 function getEthWeb3Instance() {
@@ -965,17 +991,22 @@ async function stepPending(data) {
 async function stepBuyPol(data) {
   var BN = BigNumber;
   var polETH = new BN(data.breakdown.polETH || 0);
-  var amountIn = polETH.times('1e18').integerValue(BN.ROUND_DOWN);
-  if (amountIn.lte(0)) return advanceStatus(data);
+  var anticipated = polETH.times('1e18').integerValue(BN.ROUND_DOWN);
+  if (anticipated.lte(0)) return advanceStatus(data);
 
   var ethPx = new BN(data.prices.eth);
   var polPx = new BN(data.prices.pol);
   if (!polPx.gt(0) || !ethPx.gt(0)) throw new Error('Invalid prices in saved automation data');
+
+  var ethW3 = getEthWeb3Instance();
+  // Adjust input to actual ETH balance within the 10% slippage/gas tolerance.
+  var ethBal = new BN(validation(DOMPurify.sanitize(await ethW3.eth.getBalance(myaccounts))));
+  var amountIn = new BN(adjustInputAmount(anticipated, ethBal));
+
   // Expected POL wei = amountIn * (ethPx / polPx); POL has 18 decimals like ETH.
   var expectedOut = amountIn.times(ethPx).dividedBy(polPx).integerValue(BN.ROUND_DOWN);
   var minOut = expectedOut.times('95').dividedBy('100').integerValue(BN.ROUND_DOWN);
 
-  var ethW3 = getEthWeb3Instance();
   var polErc20 = new ethW3.eth.Contract(WIZ_ERC20_ABI, MAINNET_ADDR.POL);
   var balBefore = new BN(validation(DOMPurify.sanitize(await polErc20.methods.balanceOf(myaccounts).call())));
 
@@ -989,7 +1020,7 @@ async function stepBuyPol(data) {
     minOut.toFixed(0),
     '0'
   ];
-  await sendTx(swapRouter, 'exactInputSingle', [params], ETH_GAS_V3_SWAP, amountIn.toFixed(0), false, true);
+  await sendTx(swapRouter, 'exactInputSingle', [params], ETH_GAS_V3_SWAP, amountIn.toFixed(0), false, true, false);
 
   var balAfter = new BN(validation(DOMPurify.sanitize(await polErc20.methods.balanceOf(myaccounts).call())));
   var received = balAfter.minus(balBefore);
@@ -1005,20 +1036,26 @@ async function stepBuyPol(data) {
 
 async function stepLido(data) {
   var BN = BigNumber;
-  var lidoETH = new BN(data.breakdown.lidoETH || 0).times('1e18').integerValue(BN.ROUND_DOWN);
-  if (lidoETH.lte(0)) return advanceStatus(data);
+  var anticipated = new BN(data.breakdown.lidoETH || 0).times('1e18').integerValue(BN.ROUND_DOWN);
+  if (anticipated.lte(0)) return advanceStatus(data);
 
   var ethW3 = getEthWeb3Instance();
+  // Adjust input to actual ETH balance within the 10% tolerance.
+  var ethBal = new BN(validation(DOMPurify.sanitize(await ethW3.eth.getBalance(myaccounts))));
+  var lidoETH = new BN(adjustInputAmount(anticipated, ethBal));
+
   var lidoContract = new ethW3.eth.Contract(lidoVaultABI, TREASURY_ADDRESSES.LIDO_VAULT);
 
-  var minDays = parseInt(validation(DOMPurify.sanitize(await lidoContract.methods.mindays().call())));
+  // Cap the user's chosen lock at maxdays, but never raise it to mindays — the
+  // contract minimum may exceed what the user wants and will be enforced on-chain
+  // if the user picks too small. We respect the user's choice as-is below maxdays.
   var maxDays = parseInt(validation(DOMPurify.sanitize(await lidoContract.methods.maxdays().call())));
-  var days = parseInt(data.choices.lidoDays || minDays);
-  if (isNaN(days) || days < minDays) days = minDays;
-  if (days > maxDays) days = maxDays;
+  var days = parseInt(data.choices.lidoDays);
+  if (isNaN(days) || days <= 0) days = maxDays; // sensible default if not provided
+  if (!isNaN(maxDays) && days > maxDays) days = maxDays;
 
   // Slippage 500 bps (5%), false = do not autocompound (matches earn.js semantics)
-  await sendTx(lidoContract, 'tradeAndLockStETH', ['500', days.toString(), false], ETH_GAS_LIDO, lidoETH.toFixed(0), false, true);
+  await sendTx(lidoContract, 'tradeAndLockStETH', ['500', days.toString(), false], ETH_GAS_LIDO, lidoETH.toFixed(0), false, true, false);
   return advanceStatus(data);
 }
 
@@ -1030,16 +1067,20 @@ async function stepBuyDai(data) {
   var totalEth = new BN(data.breakdown.stableETH || 0)
     .plus(data.breakdown.bayETH || 0)
     .plus(data.breakdown.bayrETH || 0);
-  var amountIn = totalEth.times('1e18').integerValue(BN.ROUND_DOWN);
-  if (amountIn.lte(0)) return advanceStatus(data);
+  var anticipated = totalEth.times('1e18').integerValue(BN.ROUND_DOWN);
+  if (anticipated.lte(0)) return advanceStatus(data);
 
   var ethPx = new BN(data.prices.eth);
   if (!ethPx.gt(0)) throw new Error('Invalid ETH price in saved automation data');
+
+  var ethW3 = getEthWeb3Instance();
+  var ethBal = new BN(validation(DOMPurify.sanitize(await ethW3.eth.getBalance(myaccounts))));
+  var amountIn = new BN(adjustInputAmount(anticipated, ethBal));
+
   // Expected DAI wei = amountIn * ethPx (DAI has 18 decimals, same as ETH).
   var expectedOut = amountIn.times(ethPx).integerValue(BN.ROUND_DOWN);
   var minOut = expectedOut.times('90').dividedBy('100').integerValue(BN.ROUND_DOWN);
 
-  var ethW3 = getEthWeb3Instance();
   var daiErc20 = new ethW3.eth.Contract(WIZ_ERC20_ABI, MAINNET_ADDR.DAI);
   var balBefore = new BN(validation(DOMPurify.sanitize(await daiErc20.methods.balanceOf(myaccounts).call())));
 
@@ -1053,7 +1094,7 @@ async function stepBuyDai(data) {
     minOut.toFixed(0),
     '0'
   ];
-  await sendTx(swapRouter, 'exactInputSingle', [params], ETH_GAS_V3_SWAP, amountIn.toFixed(0), false, true);
+  await sendTx(swapRouter, 'exactInputSingle', [params], ETH_GAS_V3_SWAP, amountIn.toFixed(0), false, true, false);
 
   var balAfter = new BN(validation(DOMPurify.sanitize(await daiErc20.methods.balanceOf(myaccounts).call())));
   var received = balAfter.minus(balBefore);
@@ -1069,45 +1110,50 @@ async function stepBuyDai(data) {
 
 async function stepBridgeERC20(data, which) {
   var BN = BigNumber;
-  var amountStr = data.received && data.received[which] ? data.received[which] : '0';
-  var amount = new BN(amountStr);
-  if (amount.lte(0)) return advanceStatus(data);
+  var anticipated = new BN((data.received && data.received[which]) || '0');
+  if (anticipated.lte(0)) return advanceStatus(data);
 
   var ethW3 = getEthWeb3Instance();
   var tokenAddr = which === 'pol' ? MAINNET_ADDR.POL : MAINNET_ADDR.DAI;
   var tokenErc20 = new ethW3.eth.Contract(WIZ_ERC20_ABI, tokenAddr);
   var bridge     = new ethW3.eth.Contract(autoBridgev0ABI, MAINNET_ADDR.AUTO_BRIDGE);
 
-  // Record Polygon balances before bridging so we can detect arrival later.
-  // Merge with any existing preArrival from a prior bridge step in the same run.
-  var polW3 = getPolWeb3Instance();
-  var daiPol = new polW3.eth.Contract(WIZ_ERC20_ABI, TREASURY_ADDRESSES.DAI);
-  var preDai = validation(DOMPurify.sanitize(await daiPol.methods.balanceOf(myaccounts).call()));
-  var prePol = validation(DOMPurify.sanitize(await polW3.eth.getBalance(myaccounts)));
+  // Persist Polygon-side pre-balances BEFORE sending any bridge tx, so a credit
+  // arriving between the read and the bridge can't be lost. Capture only once
+  // per run so the second bridge step keeps the original pre.
+  if (!data.preArrival) {
+    var polW3pre = getPolWeb3Instance();
+    var daiPolPre = new polW3pre.eth.Contract(WIZ_ERC20_ABI, TREASURY_ADDRESSES.DAI);
+    var preDai = validation(DOMPurify.sanitize(await daiPolPre.methods.balanceOf(myaccounts).call()));
+    var prePol = validation(DOMPurify.sanitize(await polW3pre.eth.getBalance(myaccounts)));
+    var dPre = getWizardData();
+    if (!dPre) return null;
+    dPre.preArrival = { dai: preDai, pol: prePol };
+    setWizardData(dPre);
+    data = dPre;
+  }
 
-  // Re-check balance on Ethereum in case of partial prior attempt; use whichever is smaller
+  // Tolerance: if held tokens are within 10% of anticipated, proceed with what's
+  // there; if less, treat as a short condition.
   var held = new BN(validation(DOMPurify.sanitize(await tokenErc20.methods.balanceOf(myaccounts).call())));
-  var sendAmount = BigNumber.minimum(amount, held);
-  if (sendAmount.lte(0)) {
-    // Already bridged in a prior attempt; advance.
-    var dAdv = getWizardData();
-    if (dAdv) {
-      dAdv.preArrival = dAdv.preArrival || { dai: preDai, pol: prePol };
-      setWizardData(dAdv);
-    }
+  if (held.lte(0)) {
+    // Already bridged in a prior attempt; nothing to send, advance.
     return advanceStatus(data);
   }
+  var sendAmount = new BN(adjustInputAmount(anticipated, held));
 
   var allow = new BN(validation(DOMPurify.sanitize(await tokenErc20.methods.allowance(myaccounts, MAINNET_ADDR.AUTO_BRIDGE).call())));
   if (allow.lt(sendAmount)) {
-    await sendTx(tokenErc20, 'approve', [MAINNET_ADDR.AUTO_BRIDGE, sendAmount.toFixed(0)], ETH_GAS_APPROVE, '0', false, true);
+    await sendTx(tokenErc20, 'approve', [MAINNET_ADDR.AUTO_BRIDGE, sendAmount.toFixed(0)], ETH_GAS_APPROVE, '0', false, true, false);
   }
-  await sendTx(bridge, 'bridgeERC20', [tokenAddr, myaccounts, sendAmount.toFixed(0)], ETH_GAS_BRIDGE_ERC, '0', false, true);
+  await sendTx(bridge, 'bridgeERC20', [tokenAddr, myaccounts, sendAmount.toFixed(0)], ETH_GAS_BRIDGE_ERC, '0', false, true, false);
 
+  // Update the persisted received[which] to what we actually sent so downstream
+  // arrival checks compare against the real bridged amount.
   var d = getWizardData();
   if (!d) return null;
-  // Persist pre-arrival once so both POL and DAI arrival can be detected later
-  if (!d.preArrival) d.preArrival = { dai: preDai, pol: prePol };
+  d.received = d.received || {};
+  d.received[which] = sendAmount.toFixed(0);
   setWizardData(d);
   return advanceStatus(d);
 }
@@ -1117,53 +1163,53 @@ async function stepAwaitPolygon(data) {
   var polW3 = getPolWeb3Instance();
   var daiPol = new polW3.eth.Contract(WIZ_ERC20_ABI, TREASURY_ADDRESSES.DAI);
 
-  var needDai = new BN((data.received && data.received.dai) || '0');
-  var needPol = new BN((data.received && data.received.pol) || '0');
-  var preDai  = new BN((data.preArrival && data.preArrival.dai) || '0');
-  var prePol  = new BN((data.preArrival && data.preArrival.pol) || '0');
-  var minPolReserve = new BN(POL_GAS_RESERVE_WEI);
-
-  // Bound the wait: the PoS bridge typically settles within ~30 min. Cap at
-  // POLL_MAX_AWAIT_MS so a stuck bridge fails cleanly instead of polling forever.
+  // Bound the wait — the PoS bridge typically settles within ~30 min. Beyond
+  // POLL_MAX_AWAIT_MS we surface a single generic "timed out / below target"
+  // message and let the user check their account history.
   var startedAt = Date.now();
+
   while (true) {
     var cur = getWizardData();
     if (!cur || cur.status !== 'awaiting_polygon' || automationCancelled) return null;
     if (Date.now() - startedAt > POLL_MAX_AWAIT_MS) {
-      throw new Error('Timed out waiting for funds to arrive on Polygon');
+      throw new Error('Timed out waiting for funds or balance is below target. Please check your account history.');
     }
 
     try {
+      var needPol = new BN((cur.received && cur.received.pol) || '0');
+      var preDai  = new BN((cur.preArrival && cur.preArrival.dai) || '0');
+      var prePol  = new BN((cur.preArrival && cur.preArrival.pol) || '0');
+      var minPolReserve = new BN(POL_GAS_RESERVE_WEI);
+
+      // DAI required for the remaining Polygon tasks. We compare against total
+      // DAI balance (not delta) — any DAI the user already had counts.
+      var requiredDai = new BN((cur.daiTargets && cur.daiTargets.stable) || '0')
+        .plus((cur.daiTargets && cur.daiTargets.bay) || '0')
+        .plus((cur.daiTargets && cur.daiTargets.bayr) || '0');
+      var daiFloor = requiredDai.times('90').dividedBy('100').integerValue(BN.ROUND_DOWN);
+
       var daiBal = new BN(validation(DOMPurify.sanitize(await daiPol.methods.balanceOf(myaccounts).call())));
       var polBal = new BN(validation(DOMPurify.sanitize(await polW3.eth.getBalance(myaccounts))));
 
-      // PoS bridge is 1:1; accept ≥99% arrived to tolerate any minor rounding.
-      var daiArrived = true;
-      if (needDai.gt(0)) {
-        var daiMin = preDai.plus(needDai.times('99').dividedBy('100').integerValue(BN.ROUND_DOWN));
-        daiArrived = daiBal.gte(daiMin);
-      }
-      var polArrived = true;
-      if (needPol.gt(0)) {
-        var polMin = prePol.plus(needPol.times('99').dividedBy('100').integerValue(BN.ROUND_DOWN));
-        polArrived = polBal.gte(polMin);
-      }
-      var hasGas = polBal.gte(minPolReserve);
+      var changed = !daiBal.eq(preDai) || !polBal.eq(prePol);
+      if (changed) {
+        // POL credit check: balance increase since pre-check covers ≥90% of
+        // anticipated POL bridge amount. Detecting via delta tolerates the user
+        // spending POL idle (delta could be negative; we just keep waiting).
+        var polDelta = polBal.minus(prePol);
+        var polOk = needPol.lte(0) || polDelta.gte(needPol.times('90').dividedBy('100').integerValue(BN.ROUND_DOWN));
+        var daiOk = requiredDai.lte(0) || daiBal.gte(daiFloor);
+        var hasGas = polBal.gte(minPolReserve);
 
-      if (daiArrived && polArrived && hasGas) {
-        // Soft 10% rule: verify DAI acquired on Polygon covers ≥90% of quoted targets.
-        var targets = new BN((cur.daiTargets && cur.daiTargets.stable) || '0')
-          .plus((cur.daiTargets && cur.daiTargets.bay) || '0')
-          .plus((cur.daiTargets && cur.daiTargets.bayr) || '0');
-        var acquired = daiBal.minus(preDai);
-        if (targets.gt(0) && acquired.times('100').lt(targets.times('90'))) {
-          throw new Error('DAI acquired (' + acquired.dividedBy('1e18').toFixed(2) + ') is more than 10% below target (' + targets.dividedBy('1e18').toFixed(2) + ')');
-        }
-        return advanceStatus(cur);
+        if (polOk && daiOk && hasGas) return advanceStatus(cur);
+
+        // Balance changed but isn't yet sufficient — could be the user spending
+        // POL while we wait. Re-baseline pre to current and keep waiting.
+        cur.preArrival = { dai: daiBal.toFixed(0), pol: polBal.toFixed(0) };
+        setWizardData(cur);
       }
     } catch (e) {
-      // Throw cleanly on the 10% shortfall; otherwise swallow transient RPC errors.
-      if (e && e.message && e.message.indexOf('10% below target') !== -1) throw e;
+      // Transient RPC error — log and retry.
       console.log('awaiting_polygon poll error:', e);
     }
     await wizardSleep(POLL_INTERVAL_MS);
@@ -1176,11 +1222,13 @@ async function computeTaskDaiAmount(data, status) {
   var daiPol = new polW3.eth.Contract(WIZ_ERC20_ABI, TREASURY_ADDRESSES.DAI);
   var bal = new BN(validation(DOMPurify.sanitize(await daiPol.methods.balanceOf(myaccounts).call())));
   if (isLastPolygonTask(data.choices, status)) {
+    // Last task absorbs whatever remains.
     return bal.toFixed(0);
   }
   var key = status === 'stable_deposit' ? 'stable' : (status === 'buying_bay' ? 'bay' : 'bayr');
   var target = new BN((data.daiTargets && data.daiTargets[key]) || '0');
-  return BN.minimum(target, bal).toFixed(0);
+  // Apply 10% input tolerance: ≥90% of target proceeds with what's available.
+  return adjustInputAmount(target, bal);
 }
 
 async function stepStableDeposit(data) {
@@ -1192,18 +1240,19 @@ async function stepStableDeposit(data) {
   var daiPol  = new polW3.eth.Contract(WIZ_ERC20_ABI, TREASURY_ADDRESSES.DAI);
   var stable  = new polW3.eth.Contract(stableVaultABI, TREASURY_ADDRESSES.STABLE_POOL);
 
-  var inRange = validation(DOMPurify.sanitize(await stable.methods.isInRange().call())) === true;
-  if (!inRange) throw new Error('StableVault pool is currently out of range');
-
+  // Newer StableVault permits out-of-range deposits, so no isInRange gate.
   var allow = new BigNumber(validation(DOMPurify.sanitize(await daiPol.methods.allowance(myaccounts, TREASURY_ADDRESSES.STABLE_POOL).call())));
   if (allow.lt(amountBN)) {
-    await sendTx(daiPol, 'approve', [TREASURY_ADDRESSES.STABLE_POOL, amount], ETH_GAS_APPROVE, '0', false, false);
+    await sendTx(daiPol, 'approve', [TREASURY_ADDRESSES.STABLE_POOL, amount], ETH_GAS_APPROVE, '0', false, false, false);
   }
   var deadline = (Math.floor(Date.now() / 1000) + 300).toString();
-  await sendTx(stable, 'deposit', [amount, deadline], 2000000, '0', false, false);
+  await sendTx(stable, 'deposit', [amount, deadline], 2000000, '0', false, false, false);
   return advanceStatus(data);
 }
 
+// Quote DAI -> BAY (or BAYR) using the standard Uniswap V2 getAmountOut helper
+// already defined globally in index.html. BAY/BAYR are 8-decimal tokens; DAI is
+// 18-decimal — getAmountOut works in raw token units so decimals are implicit.
 async function quoteDaiToBay(polW3, daiInBN, bayAddr) {
   var factoryC = new polW3.eth.Contract(FactoryABI, POL_BAY_EXCHANGE);
   var pair = validation(DOMPurify.sanitize(await factoryC.methods.getPair(bayAddr, TREASURY_ADDRESSES.DAI).call()));
@@ -1220,11 +1269,7 @@ async function quoteDaiToBay(polW3, daiInBN, bayAddr) {
     reserveDai = new BigNumber(reserves._reserve0.toString());
   }
   if (reserveBay.lte(0) || reserveDai.lte(0)) throw new Error('Empty BAY/DAI reserves');
-  // Uniswap V2 constant-product with 0.3% fee
-  var amountInWithFee = daiInBN.times('997');
-  var numerator   = amountInWithFee.times(reserveBay);
-  var denominator = reserveDai.times('1000').plus(amountInWithFee);
-  return numerator.dividedBy(denominator).integerValue(BigNumber.ROUND_DOWN);
+  return getAmountOut(daiInBN, reserveDai, reserveBay, new BigNumber(997));
 }
 
 async function stepBuyBayToken(data, isR) {
@@ -1243,11 +1288,12 @@ async function stepBuyBayToken(data, isR) {
   var router = new polW3.eth.Contract(RouterABI, POL_BAY_ROUTER);
 
   var quoted = await quoteDaiToBay(polW3, amountBN, tokenAddr);
+  if (quoted.lte(0)) throw new Error('Quote failed or trade too large for pool');
   var minOut = quoted.times('90').dividedBy('100').integerValue(BigNumber.ROUND_DOWN);
 
   var allow = new BigNumber(validation(DOMPurify.sanitize(await daiPol.methods.allowance(myaccounts, POL_BAY_ROUTER).call())));
   if (allow.lt(amountBN)) {
-    await sendTx(daiPol, 'approve', [POL_BAY_ROUTER, amount], ETH_GAS_APPROVE, '0', false, false);
+    await sendTx(daiPol, 'approve', [POL_BAY_ROUTER, amount], ETH_GAS_APPROVE, '0', false, false, false);
   }
   var deadline = (Math.floor(Date.now() / 1000) + 300).toString();
   await sendTx(
@@ -1256,6 +1302,7 @@ async function stepBuyBayToken(data, isR) {
     [amount, minOut.toFixed(0), [TREASURY_ADDRESSES.DAI, tokenAddr], myaccounts, deadline, POL_BAY_EXCHANGE],
     5000000,
     '0',
+    false,
     false,
     false
   );

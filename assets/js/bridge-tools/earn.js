@@ -3679,7 +3679,7 @@ async function executeWithdrawal(withdrawData) {
       const balance = validation(DOMPurify.sanitize(await tokenContract.methods.balanceOf(myaccounts).call()));
       const amountWei = amount ? new BN(amount).times(decimals).toFixed(0, BN.ROUND_DOWN) : balance;
       if (requiresEthNetwork) {
-        await sendTx(tokenContract, "transfer", [address, amountWei], 150000, "0", true, false, true);
+        await sendTx(tokenContract, "transfer", [address, amountWei], 150000, "0", true, true, true);
       } else {
         await sendTx(tokenContract, "transfer", [address, amountWei], 150000, "0", true, false);
       }
