@@ -14,11 +14,18 @@ const TREASURY_ADDRESSES = {
   FLOW_BAYR: '0xA8aea8Ea55c9C9626234AB097d1d29eDF78da2ce',
   VOTE_BAYL: '0x13a8D0E90BA6D29f2bE87aC81C80799813b68E92',
   VOTE_BAYR: '0x482e26B0309D9D3052aE50aA2D4E7DbcC6E1A3E7',
-  STABLE_POOL: '0x3bec8b6d568720133D2a4C5B98E811cA43687d57',
-  STABLE_FEE_VAULT: '0xD47B0e7e46CEccEaa1C40a805053a69754FAfEf0',
+  STABLE_POOL: '0x048E88311ca84876aeA086125825492e2AF2e5A0',
+  STABLE_POOL_PREVIOUS: '0x3bec8b6d568720133D2a4C5B98E811cA43687d57',
+  STABLE_FEE_VAULT: '0xDD15B203dAFF25C9d1Cc53E524e85aB20ae0A70c',
   AUTOBRIDGE: '0x1c682Bcb55B9be1296eed6e60dc0e4832b05B05A',
   UNISWAP_V4_POOL_MANAGER: '0x67366782805870060151383F4BbFF9daB53e5cD6',
   UNISWAP_V4_STATE_VIEW: '0x5eA1bD7974c8A611cBAB0bDCAFcB1D9CC9b3BA5a',
+  // Polygon Universal Router (used for Uniswap V4 swaps)
+  UNIVERSAL_ROUTER: '0x418fBc4E6B5C694495c90C7cDE1f293EE444F10B',
+  // Permit2 (canonical address, same on every chain)
+  PERMIT2: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+  // Uniswap V4 DAI/USDC 0.005% fee tier pool ID (fee=50, tickSpacing=1, hooks=0)
+  V4_DAI_USDC_POOL_ID: '0x6da799cefb9ea6ceb8e45b37585c4cd7844b3aec34aa999c266beff925af1829',
   USDC: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
   DAI: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',
   WETH: '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619',
@@ -1300,9 +1307,343 @@ async function withdrawLidoHODL() {
 // STABLEVAULT FUNCTIONS
 // ============================================================================
 
+// Minimal ERC20 ABI (allowance + approve) used by upgrade / V4 swap helpers
+const STABLE_ERC20_ABI = [
+  {"constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"type":"function"},
+  {"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function"},
+  {"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"}
+];
+
+// Permit2 ABI subset (allowance + approve + max)
+const PERMIT2_ABI = [
+  {"inputs":[{"name":"user","type":"address"},{"name":"token","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"amount","type":"uint160"},{"name":"expiration","type":"uint48"},{"name":"nonce","type":"uint48"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"name":"token","type":"address"},{"name":"spender","type":"address"},{"name":"amount","type":"uint160"},{"name":"expiration","type":"uint48"}],"name":"approve","outputs":[],"stateMutability":"nonpayable","type":"function"}
+];
+
+// Universal Router ABI subset (execute with deadline)
+const UNIVERSAL_ROUTER_ABI = [
+  {"inputs":[{"name":"commands","type":"bytes"},{"name":"inputs","type":"bytes[]"},{"name":"deadline","type":"uint256"}],"name":"execute","outputs":[],"stateMutability":"payable","type":"function"}
+];
+
+// Approve USDC to Permit2 and Permit2 to UniversalRouter so a V4 swap can pull
+// `amountUsdcWei` of USDC. Idempotent: only sends transactions when the
+// existing allowance is insufficient.
+async function ensureUsdcPermit2ForV4(amountUsdcWei) {
+  const web3 = earnState.polWeb3;
+  const BN = BigNumber;
+  const usdc = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.USDC);
+  const permit2 = new web3.eth.Contract(PERMIT2_ABI, TREASURY_ADDRESSES.PERMIT2);
+
+  // 1. ERC20 allowance: USDC -> Permit2
+  const erc20Allowance = String(await usdc.methods.allowance(myaccounts, TREASURY_ADDRESSES.PERMIT2).call());
+  if (new BN(erc20Allowance).lt(new BN(amountUsdcWei))) {
+    Swal.fire({
+      icon: 'info',
+      title: translateThis('Allowance'),
+      text: translateThis('Authorizing USDC for Permit2...'),
+      showConfirmButton: false
+    });
+    // Approve max so subsequent swaps don't need to re-approve.
+    const maxUint = new BN(2).pow(256).minus(1).toFixed(0);
+    await sendTx(usdc, "approve", [TREASURY_ADDRESSES.PERMIT2, maxUint], 100000, "0", false, false);
+  }
+
+  // 2. Permit2 allowance: Permit2 -> UniversalRouter for USDC
+  const p2Allow = await permit2.methods.allowance(myaccounts, TREASURY_ADDRESSES.USDC, TREASURY_ADDRESSES.UNIVERSAL_ROUTER).call();
+  const p2Amount = new BN(p2Allow.amount || p2Allow[0] || '0');
+  const p2Expiration = new BN(p2Allow.expiration || p2Allow[1] || '0');
+  const nowSec = new BN(Math.floor(Date.now() / 1000));
+  if (p2Amount.lt(new BN(amountUsdcWei)) || p2Expiration.lte(nowSec)) {
+    Swal.fire({
+      icon: 'info',
+      title: translateThis('Allowance'),
+      text: translateThis('Authorizing Universal Router via Permit2...'),
+      showConfirmButton: false
+    });
+    // Permit2 amount is uint160, expiration is uint48. Use type-max for both.
+    const maxUint160 = new BN(2).pow(160).minus(1).toFixed(0);
+    const maxUint48 = new BN(2).pow(48).minus(1).toFixed(0);
+    await sendTx(permit2, "approve", [TREASURY_ADDRESSES.USDC, TREASURY_ADDRESSES.UNIVERSAL_ROUTER, maxUint160, maxUint48], 100000, "0", false, false);
+  }
+}
+
+// Perform a USDC -> DAI swap on the Uniswap V4 0.005% (fee=50, tickSpacing=1)
+// pool via the Universal Router with a 1% slippage tolerance. Returns the
+// number of DAI wei actually received by the user (post - pre balance).
+//
+// `amountUsdcWei` is the exact amount of USDC (6 decimals) to swap. Caller
+// is expected to make sure the user actually holds at least this much USDC.
+async function swapUsdcForDai(amountUsdcWei) {
+  const web3 = earnState.polWeb3;
+  const BN = BigNumber;
+  if (new BN(amountUsdcWei).lte(0)) return '0';
+
+  const dai = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.DAI);
+  const usdc = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.USDC);
+
+  // Confirm user actually has the USDC requested.
+  const userUsdcBal = new BN(String(await usdc.methods.balanceOf(myaccounts).call()));
+  if (userUsdcBal.lt(new BN(amountUsdcWei))) {
+    throw new Error(translateThis('Not enough USDC to perform swap'));
+  }
+
+  // Pre-swap DAI balance so we can return the actual amount received.
+  const preDai = new BN(String(await dai.methods.balanceOf(myaccounts).call()));
+
+  await ensureUsdcPermit2ForV4(amountUsdcWei);
+
+  // Build PoolKey: currencies sorted; DAI=0x8f3..., USDC=0x3c4... -> USDC < DAI
+  const usdcAddr = TREASURY_ADDRESSES.USDC.toLowerCase();
+  const daiAddr = TREASURY_ADDRESSES.DAI.toLowerCase();
+  const usdcIsZero = usdcAddr < daiAddr;
+  const currency0 = usdcIsZero ? TREASURY_ADDRESSES.USDC : TREASURY_ADDRESSES.DAI;
+  const currency1 = usdcIsZero ? TREASURY_ADDRESSES.DAI : TREASURY_ADDRESSES.USDC;
+  const fee = 50;            // 0.005%
+  const tickSpacing = 1;
+  const hooks = '0x0000000000000000000000000000000000000000';
+
+  // We are selling USDC for DAI. zeroForOne is true iff input is currency0.
+  const zeroForOne = usdcIsZero; // input = USDC
+
+  // Slippage protection. USDC has 6 decimals and DAI has 18. At a ~1:1 peg
+  // the expected DAI out is amountUsdc * 1e12. Allow 1% slippage downward.
+  const expectedDaiWei = new BN(amountUsdcWei).times('1e12');
+  const minDaiOutWei = expectedDaiWei.times('0.99').integerValue(BN.ROUND_DOWN).toFixed(0);
+
+  // V4 action ids
+  const ACTION_SWAP_EXACT_IN_SINGLE = '06';
+  const ACTION_SETTLE_ALL = '0c';
+  const ACTION_TAKE_ALL = '0f';
+  const actions = '0x' + ACTION_SWAP_EXACT_IN_SINGLE + ACTION_SETTLE_ALL + ACTION_TAKE_ALL;
+
+  // Encode SWAP_EXACT_IN_SINGLE params:
+  // (PoolKey poolKey, bool zeroForOne, uint128 amountIn, uint128 amountOutMinimum, bytes hookData)
+  const swapParams = web3.eth.abi.encodeParameters(
+    [
+      { "components": [
+          { "name": "currency0", "type": "address" },
+          { "name": "currency1", "type": "address" },
+          { "name": "fee", "type": "uint24" },
+          { "name": "tickSpacing", "type": "int24" },
+          { "name": "hooks", "type": "address" }
+        ],
+        "name": "poolKey",
+        "type": "tuple"
+      },
+      { "name": "zeroForOne", "type": "bool" },
+      { "name": "amountIn", "type": "uint128" },
+      { "name": "amountOutMinimum", "type": "uint128" },
+      { "name": "hookData", "type": "bytes" }
+    ],
+    [
+      [currency0, currency1, fee, tickSpacing, hooks],
+      zeroForOne,
+      String(amountUsdcWei),
+      minDaiOutWei,
+      '0x'
+    ]
+  );
+
+  // SETTLE_ALL: pay USDC into the pool. (currency, maxAmount)
+  const settleParams = web3.eth.abi.encodeParameters(
+    ['address', 'uint256'],
+    [TREASURY_ADDRESSES.USDC, String(amountUsdcWei)]
+  );
+  // TAKE_ALL: collect DAI to user. (currency, minAmount)
+  const takeParams = web3.eth.abi.encodeParameters(
+    ['address', 'uint256'],
+    [TREASURY_ADDRESSES.DAI, minDaiOutWei]
+  );
+
+  // Universal Router input for V4_SWAP command: abi.encode(bytes actions, bytes[] params)
+  const v4Input = web3.eth.abi.encodeParameters(
+    ['bytes', 'bytes[]'],
+    [actions, [swapParams, settleParams, takeParams]]
+  );
+
+  const COMMAND_V4_SWAP = '0x10';
+  const router = new web3.eth.Contract(UNIVERSAL_ROUTER_ABI, TREASURY_ADDRESSES.UNIVERSAL_ROUTER);
+  const deadline = Math.floor(Date.now() / 1000) + 600;
+
+  Swal.fire({
+    icon: 'info',
+    title: translateThis('Swapping'),
+    text: translateThis('Swapping USDC for DAI on Uniswap V4...'),
+    showConfirmButton: false
+  });
+  await delay(500);
+
+  await sendTx(router, "execute", [COMMAND_V4_SWAP, [v4Input], deadline.toString()], 600000, "0", false, false);
+
+  const postDai = new BN(String(await dai.methods.balanceOf(myaccounts).call()));
+  const received = postDai.minus(preDai);
+  if (received.lt(new BN(minDaiOutWei))) {
+    // The on-chain V4 swap should already have reverted on slippage, but be
+    // defensive in case our balance read races a refresh.
+    throw new Error(translateThis('USDC -> DAI swap returned less than the expected minimum'));
+  }
+  return received.integerValue(BN.ROUND_DOWN).toFixed(0);
+}
+
+// Mandatory upgrade flow: when the user still holds shares in the previous
+// (now deprecated) StableVault pool, walk them through withdrawing, swapping
+// any received USDC for DAI on the V4 0.005% pool with 1% slippage, and
+// depositing into the new pool. Throws on cancellation or on any failure
+// after the initial withdrawal so callers know to abort loading new-pool
+// data (which would otherwise confuse the user).
+//
+// Returns true when an upgrade was performed (and completed) so the caller
+// can refresh stale UI; returns false when no upgrade was needed.
+async function upgradeStableVaultIfNeeded() {
+  if (!earnState.polWeb3 || !myaccounts) return false;
+  const web3 = earnState.polWeb3;
+  const BN = BigNumber;
+
+  // Cheap up-front check using the previous pool's shares() view.
+  const prevPool = new web3.eth.Contract(stableVaultABI, TREASURY_ADDRESSES.STABLE_POOL_PREVIOUS);
+  let prevShares;
+  try {
+    prevShares = String(await prevPool.methods.shares(myaccounts).call());
+  } catch (e) {
+    // The previous pool may not exist on test environments; treat as no upgrade.
+    return false;
+  }
+  if (!isGreaterThanZero(prevShares)) return false;
+
+  // Mandatory dialog. The user MUST agree to proceed; cancellation throws so
+  // pool-info loading aborts (otherwise the new pool data confuses the user).
+  const intro = await Swal.fire({
+    title: translateThis('StableVault Upgrade Required'),
+    html:
+      '<div style="text-align:left;">' +
+        '<p>' + translateThis('The StableVault has been updated to a new contract. Before you can interact with the new pool you must migrate your existing position from the previous pool.') + '</p>' +
+        '<p>' + translateThis('You will be guided through the following transactions:') + '</p>' +
+        '<ol style="padding-left:20px;">' +
+          '<li>' + translateThis('Clean any leftover dust on the previous pool (only if needed).') + '</li>' +
+          '<li>' + translateThis('Withdraw your full position from the previous pool.') + '</li>' +
+          '<li>' + translateThis('Swap any USDC you received into DAI on Uniswap V4 (0.005% fee tier, 1% slippage tolerance).') + '</li>' +
+          '<li>' + translateThis('Deposit the resulting DAI into the new pool.') + '</li>' +
+        '</ol>' +
+        '<p><strong>' + translateThis('You must complete this upgrade before you can see information about the new pool.') + '</strong></p>' +
+      '</div>',
+    icon: 'warning',
+    showCancelButton: true,
+    allowOutsideClick: false,
+    allowEscapeKey: false,
+    confirmButtonText: translateThis('Approve and Continue'),
+    cancelButtonText: translateThis('Cancel')
+  });
+  if (!intro.isConfirmed) {
+    throw new Error(translateThis('StableVault upgrade is required to proceed'));
+  }
+
+  const dai = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.DAI);
+  const usdc = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.USDC);
+
+  let preDai, preUsdc;
+  showSpinner();
+  try {
+    // Step 1: clean dust on the previous pool if either side > $2 so the
+    // value is folded into the user's withdrawal rather than left behind.
+    try {
+      const oldPoolDaiBal = new BN(String(await dai.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL_PREVIOUS).call()));
+      const oldPoolUsdcBal = new BN(String(await usdc.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL_PREVIOUS).call()));
+      if (oldPoolDaiBal.gt(new BN('2000000000000000000')) || oldPoolUsdcBal.gt(new BN('2000000'))) {
+        const cleanDeadline = Math.floor(Date.now() / 1000) + 300;
+        Swal.fire({ icon: 'info', title: translateThis('Cleaning Dust'), text: translateThis('Folding pool dust into the position before withdrawing...'), showConfirmButton: false });
+        await delay(500);
+        await sendTx(prevPool, "cleanDust", [cleanDeadline, "0"], 1500000, "0", false, false);
+      }
+    } catch (cleanErr) {
+      // Cleaning dust is best-effort; do not abort the upgrade if it fails.
+      console.log('cleanDust on previous pool failed (continuing):', cleanErr);
+    }
+
+    // Capture pre-balances so we can compute exactly how much DAI/USDC the
+    // withdraw produced (needed for the swap and deposit amounts).
+    preDai = new BN(String(await dai.methods.balanceOf(myaccounts).call()));
+    preUsdc = new BN(String(await usdc.methods.balanceOf(myaccounts).call()));
+
+    // Step 2: withdraw 100% from the previous pool.
+    Swal.fire({ icon: 'info', title: translateThis('Withdrawing'), text: translateThis('Withdrawing your full position from the previous StableVault...'), showConfirmButton: false });
+    await delay(500);
+    const wDeadline = Math.floor(Date.now() / 1000) + 300;
+    await sendTx(prevPool, "withdraw", [prevShares, wDeadline, true], 1500000, "0", false, false);
+  } catch (preErr) {
+    hideSpinner();
+    console.log(preErr);
+    const message = translateThis('Upgrade failed before withdrawal:') + ' ' + (preErr.message || (typeof preErr === 'object' ? JSON.stringify(preErr) : String(preErr)));
+    await showScrollableError(translateThis('Upgrade failed'), message);
+    throw preErr;
+  }
+
+  // After the withdrawal, ANY further failure must break the upgrade flow
+  // (per spec) so the user can recover manually rather than ending up in an
+  // ambiguous state.
+  try {
+    const postDaiBalance = new BN(String(await dai.methods.balanceOf(myaccounts).call()));
+    const postUsdcBalance = new BN(String(await usdc.methods.balanceOf(myaccounts).call()));
+    const receivedDai = postDaiBalance.minus(preDai);
+    const receivedUsdc = postUsdcBalance.minus(preUsdc);
+
+    let totalDaiToDeposit = receivedDai.gt(0) ? receivedDai : new BN('0');
+
+    // Step 3: swap any received USDC for DAI (1% slippage tolerance).
+    if (receivedUsdc.gt(0)) {
+      const swapped = await swapUsdcForDai(receivedUsdc.toFixed(0));
+      totalDaiToDeposit = totalDaiToDeposit.plus(new BN(swapped));
+    }
+
+    if (totalDaiToDeposit.lte(0)) {
+      hideSpinner();
+      await Swal.fire({ icon: 'warning', title: translateThis('Nothing to deposit'), text: translateThis('The withdrawal produced no DAI to migrate.') });
+      return true;
+    }
+
+    // Step 4: approve + deposit into the new pool.
+    const newPool = new web3.eth.Contract(stableVaultABI, TREASURY_ADDRESSES.STABLE_POOL);
+    const allowance = String(await dai.methods.allowance(myaccounts, TREASURY_ADDRESSES.STABLE_POOL).call());
+    if (new BN(allowance).lt(totalDaiToDeposit)) {
+      Swal.fire({ icon: 'info', title: translateThis('Allowance'), text: translateThis('Authorizing DAI for the new StableVault...'), showConfirmButton: false });
+      await sendTx(dai, "approve", [TREASURY_ADDRESSES.STABLE_POOL, totalDaiToDeposit.toFixed(0)], 100000, "0", false, false);
+    }
+
+    Swal.fire({ icon: 'info', title: translateThis('Depositing'), text: translateThis('Depositing migrated DAI into the new StableVault...'), showConfirmButton: false });
+    await delay(500);
+    const dDeadline = Math.floor(Date.now() / 1000) + 300;
+    await sendTx(newPool, "deposit", [totalDaiToDeposit.toFixed(0), dDeadline], 2000000, "0", false, false);
+
+    hideSpinner();
+    await Swal.fire({ icon: 'success', title: translateThis('Upgrade Complete'), text: translateThis('Your StableVault position has been migrated to the new pool.') });
+    return true;
+  } catch (postErr) {
+    hideSpinner();
+    console.log(postErr);
+    const message = translateThis('Upgrade failed after withdrawal. Your funds are safely in your wallet; please retry the migration.') + ' ' + (postErr.message || (typeof postErr === 'object' ? JSON.stringify(postErr) : String(postErr)));
+    await showScrollableError(translateThis('Upgrade failed'), message);
+    // Re-throw so callers (e.g. loadStableVaultInfo) abort and do not show
+    // potentially confusing data about the new pool.
+    throw postErr;
+  }
+}
+
 async function loadStableVaultInfo() {
   if (!earnState.polWeb3) return;
   
+  // Block all new-pool reads behind the mandatory upgrade flow. If the user
+  // still has shares in the previous pool, this prompts them through the
+  // migration; if they cancel or the migration fails, we throw and the rest
+  // of this function does not run (so the user is never shown new-pool data
+  // that would confuse them while they are mid-migration).
+  if (myaccounts) {
+    try {
+      await upgradeStableVaultIfNeeded();
+    } catch (upErr) {
+      console.log('Skipping StableVault info load: upgrade not completed.', upErr);
+      return;
+    }
+  }
+
   try {
     const stableContract = new earnState.polWeb3.eth.Contract(stableVaultABI, TREASURY_ADDRESSES.STABLE_POOL);
     
@@ -1537,10 +1878,51 @@ async function depositStableVault() {
         "name": "allowance",
         "outputs": [{"name": "", "type": "uint256"}],
         "type": "function"
+      },
+      {
+        "constant": true,
+        "inputs": [{"name": "owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "type": "function"
       }],
       TREASURY_ADDRESSES.DAI
     );
-    
+
+    // If the user does not have enough DAI for the requested deposit but the
+    // shortfall could be covered by swapping their USDC (within a 1%
+    // slippage tolerance for the V4 swap), top up by converting just enough
+    // USDC to DAI before continuing.
+    const userDaiBal = new BN(String(await daiContract.methods.balanceOf(myaccounts).call()));
+    if (userDaiBal.lt(new BN(amountWei))) {
+      const shortfallDaiWei = new BN(amountWei).minus(userDaiBal);
+      const usdcContract = new earnState.polWeb3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.USDC);
+      const userUsdcBal = new BN(String(await usdcContract.methods.balanceOf(myaccounts).call()));
+      // USDC has 6 decimals, DAI has 18; at peg 1 USDC -> 1e12 DAI wei. Add
+      // 1% to the USDC needed to cover swap slippage and rounding.
+      const usdcEquivalentForShortfall = shortfallDaiWei.dividedBy('1e12').times('1.01').integerValue(BN.ROUND_UP);
+      if (userUsdcBal.gte(usdcEquivalentForShortfall)) {
+        Swal.fire({
+          icon: 'info',
+          title: translateThis('Topping up DAI'),
+          text: translateThis('Your DAI balance is short. Swapping USDC to DAI on Uniswap V4 to cover the deposit...'),
+          showConfirmButton: false
+        });
+        await delay(500);
+        await swapUsdcForDai(usdcEquivalentForShortfall.toFixed(0));
+        // Re-check the resulting DAI balance: if it is still below the
+        // requested deposit (e.g. due to actual slippage exceeding the 1%
+        // headroom we added), abort with a clear error so the user can
+        // adjust their amount.
+        const postSwapDai = new BN(String(await daiContract.methods.balanceOf(myaccounts).call()));
+        if (postSwapDai.lt(new BN(amountWei))) {
+          throw new Error(translateThis('Even after swapping USDC, your DAI balance is below the requested deposit amount. Please reduce the amount and try again.'));
+        }
+      } else {
+        throw new Error(translateThis('Insufficient DAI balance for the requested deposit.'));
+      }
+    }
+
     // Check existing allowance before requesting approval
     const existingAllowance = String(await daiContract.methods.allowance(myaccounts, TREASURY_ADDRESSES.STABLE_POOL).call());
     if (new BN(existingAllowance).lt(new BN(amountWei))) {
@@ -1696,6 +2078,30 @@ async function withdrawStableVault() {
     const daiTokenDust = new earnState.polWeb3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.DAI);
     const daiDust = validation(DOMPurify.sanitize(await daiTokenDust.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL).call()));
     const addDust = new BN(daiDust).gt(new BN('100000000000000000'));
+
+    // If the pool is holding more than $2 of either USDC or DAI as dust, run
+    // cleanDust first so that value is folded into the active position
+    // before the withdrawal pulls the user's pro-rata share out.
+    const usdcTokenDust = new earnState.polWeb3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.USDC);
+    const usdcDust = validation(DOMPurify.sanitize(await usdcTokenDust.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL).call()));
+    if (new BN(daiDust).gt(new BN('2000000000000000000')) || new BN(usdcDust).gt(new BN('2000000'))) {
+      try {
+        const cleanDeadline = Math.floor(Date.now() / 1000) + 300;
+        Swal.fire({
+          icon: 'info',
+          title: translateThis('Cleaning Dust'),
+          text: translateThis('Pool dust exceeds $2; folding it into the active position before withdrawal so it is included in your share.'),
+          showConfirmButton: false
+        });
+        await delay(500);
+        await sendTx(stableContract, "cleanDust", [cleanDeadline, "0"], 1500000, "0", false, false);
+      } catch (cleanErr) {
+        // If cleanDust fails (e.g. cooldown), continue with the withdrawal
+        // anyway rather than blocking the user from accessing their funds.
+        console.log('cleanDust failed (continuing with withdraw):', cleanErr);
+      }
+    }
+
     await sendTx(stableContract, "withdraw", [withdrawShares.toString(), deadline, addDust], 1000000, "0", true, false);
     
     hideSpinner();

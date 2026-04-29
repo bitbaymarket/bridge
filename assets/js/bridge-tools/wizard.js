@@ -236,9 +236,25 @@ window.launchAutomationWizard = async function() {
   if (!unlocked) return;
 
   showSpinner();
+  // Fetch the Lido contract's allowed lock-period bounds so the day input
+  // in the wizard reflects the same min/max the contract itself enforces.
+  // Falls back to safe defaults if the call fails (e.g. RPC error).
+  var lidoMinDays = 1;
+  var lidoMaxDays = 1095;
   try {
     await fetchPrices();
     await fetchBalances();
+    try {
+      var ethRpcW = typeof getEthereumRpc === 'function' ? getEthereumRpc() : 'https://eth.drpc.org/';
+      var ethW3W = new Web3(ethRpcW);
+      var lidoCtr = new ethW3W.eth.Contract(lidoVaultABI, TREASURY_ADDRESSES.LIDO_VAULT);
+      var minRaw = parseInt(validation(DOMPurify.sanitize(await lidoCtr.methods.mindays().call())));
+      var maxRaw = parseInt(validation(DOMPurify.sanitize(await lidoCtr.methods.maxdays().call())));
+      if (!isNaN(minRaw) && minRaw > 0) lidoMinDays = minRaw;
+      if (!isNaN(maxRaw) && maxRaw > 0) lidoMaxDays = maxRaw;
+    } catch(le) {
+      console.log('Wizard lido bounds fetch error:', le);
+    }
   } catch(e) {
     console.log('Wizard price/balance fetch error:', e);
   }
@@ -248,6 +264,11 @@ window.launchAutomationWizard = async function() {
     await Swal.fire(translateThis('Error'), translateThis('Unable to fetch current prices. Please try again later.'), 'error');
     return;
   }
+
+  // Pick a sensible default lock period that respects the contract bounds.
+  var lidoDefaultDays = 180;
+  if (lidoDefaultDays < lidoMinDays) lidoDefaultDays = lidoMinDays;
+  if (lidoDefaultDays > lidoMaxDays) lidoDefaultDays = lidoMaxDays;
 
   var polNeedGas = wizardState.polBalance < 5 || (wizardState.polBalance * wizardState.polPrice) < 2;
   var polChecked = polNeedGas;
@@ -270,8 +291,8 @@ window.launchAutomationWizard = async function() {
       sliderHTML('lido', translateThis('Allocation')) +
       '<div style="margin-top:6px;">' +
         '<label style="font-size:0.85em;">' + translateThis('Lock Period (days)') + ':</label>' +
-        '<input type="number" id="wizLidoDays" value="180" min="1" max="1095" class="swal2-input" style="width:100px;height:30px;font-size:0.9em;padding:4px;">' +
-        '<span style="font-size:0.8em;color:#777;margin-left:6px;">' + translateThis('Default: 180 days (≈6 months)') + '</span>' +
+        '<input type="number" id="wizLidoDays" value="' + lidoDefaultDays + '" min="' + lidoMinDays + '" max="' + lidoMaxDays + '" class="swal2-input" style="width:100px;height:30px;font-size:0.9em;padding:4px;">' +
+        '<span style="font-size:0.8em;color:#777;margin-left:6px;">' + translateThis('Allowed') + ': ' + lidoMinDays + ' - ' + lidoMaxDays + ' ' + translateThis('days') + '</span>' +
       '</div>') +
 
     buildAccordionItem('stable', '💱', translateThis('Earn Yield at Uniswap (StableVault)'),
@@ -324,6 +345,8 @@ window.launchAutomationWizard = async function() {
       updateAllocationDisplay(sliders);
     },
     preConfirm: function() {
+      var lidoDaysRaw = document.getElementById('wizLidoDays').value;
+      var lidoDaysParsed = parseInt(lidoDaysRaw);
       var choices = {
         pol: document.getElementById('wiz_pol').checked,
         lido: document.getElementById('wiz_lido').checked,
@@ -334,12 +357,20 @@ window.launchAutomationWizard = async function() {
         allocStable: parseInt(document.getElementById('wizSlider_stable').value) || 0,
         allocBay: parseInt(document.getElementById('wizSlider_bay').value) || 0,
         allocBayr: parseInt(document.getElementById('wizSlider_bayr').value) || 0,
-        lidoDays: parseInt(document.getElementById('wizLidoDays').value) || 180
+        lidoDays: isNaN(lidoDaysParsed) ? lidoDefaultDays : lidoDaysParsed
       };
       if (!choices.pol && !choices.lido && !choices.stable && !choices.bay && !choices.bayr) {
         Swal.close();
         Swal.fire(translateThis('Nothing Selected'), translateThis('No options were selected. The wizard has been closed.'), 'info');
         return false;
+      }
+      // Validate the lock-period input against the contract's mindays/maxdays
+      // bounds whenever the Lido option is selected.
+      if (choices.lido) {
+        if (isNaN(lidoDaysParsed) || lidoDaysParsed < lidoMinDays || lidoDaysParsed > lidoMaxDays) {
+          Swal.showValidationMessage(translateThis('Lock period must be between') + ' ' + lidoMinDays + ' ' + translateThis('and') + ' ' + lidoMaxDays + ' ' + translateThis('days'));
+          return false;
+        }
       }
       return choices;
     }
