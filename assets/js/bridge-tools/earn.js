@@ -1310,13 +1310,6 @@ async function withdrawLidoHODL() {
 // STABLEVAULT FUNCTIONS
 // ============================================================================
 
-// Minimal ERC20 ABI (allowance + approve) used by upgrade / V4 swap helpers
-const STABLE_ERC20_ABI = [
-  {"constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"type":"function"},
-  {"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function"},
-  {"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"}
-];
-
 // Permit2 ABI subset (allowance + approve + max)
 const PERMIT2_ABI = [
   {"inputs":[{"name":"user","type":"address"},{"name":"token","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"amount","type":"uint160"},{"name":"expiration","type":"uint48"},{"name":"nonce","type":"uint48"}],"stateMutability":"view","type":"function"},
@@ -1334,11 +1327,11 @@ const UNIVERSAL_ROUTER_ABI = [
 async function ensureUsdcPermit2ForV4(amountUsdcWei) {
   const web3 = earnState.polWeb3;
   const BN = BigNumber;
-  const usdc = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.USDC);
+  const usdc = new web3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.USDC);
   const permit2 = new web3.eth.Contract(PERMIT2_ABI, TREASURY_ADDRESSES.PERMIT2);
 
   // 1. ERC20 allowance: USDC -> Permit2
-  const erc20Allowance = String(await usdc.methods.allowance(myaccounts, TREASURY_ADDRESSES.PERMIT2).call());
+  const erc20Allowance = validation(DOMPurify.sanitize(await usdc.methods.allowance(myaccounts, TREASURY_ADDRESSES.PERMIT2).call()));
   if (new BN(erc20Allowance).lt(new BN(amountUsdcWei))) {
     Swal.fire({
       icon: 'info',
@@ -1352,7 +1345,7 @@ async function ensureUsdcPermit2ForV4(amountUsdcWei) {
   }
 
   // 2. Permit2 allowance: Permit2 -> UniversalRouter for USDC
-  const p2Allow = await permit2.methods.allowance(myaccounts, TREASURY_ADDRESSES.USDC, TREASURY_ADDRESSES.UNIVERSAL_ROUTER).call();
+  const p2Allow = validation(JSON.parse(DOMPurify.sanitize(JSON.stringify(await permit2.methods.allowance(myaccounts, TREASURY_ADDRESSES.USDC, TREASURY_ADDRESSES.UNIVERSAL_ROUTER).call()))));
   const p2Amount = new BN(p2Allow.amount || p2Allow[0] || '0');
   const p2Expiration = new BN(p2Allow.expiration || p2Allow[1] || '0');
   const nowSec = new BN(Math.floor(Date.now() / 1000));
@@ -1381,111 +1374,118 @@ async function swapUsdcForDai(amountUsdcWei) {
   const BN = BigNumber;
   if (new BN(amountUsdcWei).lte(0)) return '0';
 
-  const dai = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.DAI);
-  const usdc = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.USDC);
+  const dai = new web3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.DAI);
+  const usdc = new web3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.USDC);
 
   // Confirm user actually has the USDC requested.
-  const userUsdcBal = new BN(String(await usdc.methods.balanceOf(myaccounts).call()));
+  const userUsdcBal = new BN(validation(DOMPurify.sanitize(await usdc.methods.balanceOf(myaccounts).call())));
   if (userUsdcBal.lt(new BN(amountUsdcWei))) {
     throw new Error(translateThis('Not enough USDC to perform swap'));
   }
 
   // Pre-swap DAI balance so we can return the actual amount received.
-  const preDai = new BN(String(await dai.methods.balanceOf(myaccounts).call()));
+  const preDai = new BN(validation(DOMPurify.sanitize(await dai.methods.balanceOf(myaccounts).call())));
 
-  await ensureUsdcPermit2ForV4(amountUsdcWei);
+  showSpinner();
+  try {
+    await ensureUsdcPermit2ForV4(amountUsdcWei);
 
-  // Build PoolKey: currencies sorted; DAI=0x8f3..., USDC=0x3c4... -> USDC < DAI
-  const usdcAddr = TREASURY_ADDRESSES.USDC.toLowerCase();
-  const daiAddr = TREASURY_ADDRESSES.DAI.toLowerCase();
-  const usdcIsZero = usdcAddr < daiAddr;
-  const currency0 = usdcIsZero ? TREASURY_ADDRESSES.USDC : TREASURY_ADDRESSES.DAI;
-  const currency1 = usdcIsZero ? TREASURY_ADDRESSES.DAI : TREASURY_ADDRESSES.USDC;
-  const fee = 50;            // 0.005%
-  const tickSpacing = 1;
-  const hooks = '0x0000000000000000000000000000000000000000';
+    // Build PoolKey: currencies sorted; DAI=0x8f3..., USDC=0x3c4... -> USDC < DAI
+    const usdcAddr = TREASURY_ADDRESSES.USDC.toLowerCase();
+    const daiAddr = TREASURY_ADDRESSES.DAI.toLowerCase();
+    const usdcIsZero = usdcAddr < daiAddr;
+    const currency0 = usdcIsZero ? TREASURY_ADDRESSES.USDC : TREASURY_ADDRESSES.DAI;
+    const currency1 = usdcIsZero ? TREASURY_ADDRESSES.DAI : TREASURY_ADDRESSES.USDC;
+    const fee = 50;            // 0.005%
+    const tickSpacing = 1;
+    const hooks = '0x0000000000000000000000000000000000000000';
 
-  // We are selling USDC for DAI. zeroForOne is true iff input is currency0.
-  const zeroForOne = usdcIsZero; // input = USDC
+    // We are selling USDC for DAI. zeroForOne is true iff input is currency0.
+    const zeroForOne = usdcIsZero; // input = USDC
 
-  // Slippage protection. USDC has 6 decimals and DAI has 18. At a ~1:1 peg
-  // the expected DAI out is amountUsdc * 1e12. Allow 1% slippage downward.
-  const expectedDaiWei = new BN(amountUsdcWei).times('1e12');
-  const minDaiOutWei = expectedDaiWei.times('0.99').integerValue(BN.ROUND_DOWN).toFixed(0);
+    // Slippage protection. USDC has 6 decimals and DAI has 18. At a ~1:1 peg
+    // the expected DAI out is amountUsdc * 1e12. Allow 1% slippage downward.
+    const expectedDaiWei = new BN(amountUsdcWei).times('1e12');
+    const minDaiOutWei = expectedDaiWei.times('0.99').integerValue(BN.ROUND_DOWN).toFixed(0);
 
-  // V4 action ids
-  const ACTION_SWAP_EXACT_IN_SINGLE = '06';
-  const ACTION_SETTLE_ALL = '0c';
-  const ACTION_TAKE_ALL = '0f';
-  const actions = '0x' + ACTION_SWAP_EXACT_IN_SINGLE + ACTION_SETTLE_ALL + ACTION_TAKE_ALL;
+    // V4 action ids
+    const ACTION_SWAP_EXACT_IN_SINGLE = '06';
+    const ACTION_SETTLE_ALL = '0c';
+    const ACTION_TAKE_ALL = '0f';
+    const actions = '0x' + ACTION_SWAP_EXACT_IN_SINGLE + ACTION_SETTLE_ALL + ACTION_TAKE_ALL;
 
-  // Encode SWAP_EXACT_IN_SINGLE params:
-  // (PoolKey poolKey, bool zeroForOne, uint128 amountIn, uint128 amountOutMinimum, bytes hookData)
-  const swapParams = web3.eth.abi.encodeParameters(
-    [
-      { "components": [
-          { "name": "currency0", "type": "address" },
-          { "name": "currency1", "type": "address" },
-          { "name": "fee", "type": "uint24" },
-          { "name": "tickSpacing", "type": "int24" },
-          { "name": "hooks", "type": "address" }
-        ],
-        "name": "poolKey",
-        "type": "tuple"
-      },
-      { "name": "zeroForOne", "type": "bool" },
-      { "name": "amountIn", "type": "uint128" },
-      { "name": "amountOutMinimum", "type": "uint128" },
-      { "name": "hookData", "type": "bytes" }
-    ],
-    [
-      [currency0, currency1, fee, tickSpacing, hooks],
-      zeroForOne,
-      String(amountUsdcWei),
-      minDaiOutWei,
-      '0x'
-    ]
-  );
+    // Encode SWAP_EXACT_IN_SINGLE params:
+    // (PoolKey poolKey, bool zeroForOne, uint128 amountIn, uint128 amountOutMinimum, bytes hookData)
+    const swapParams = web3.eth.abi.encodeParameters(
+      [
+        { "components": [
+            { "name": "currency0", "type": "address" },
+            { "name": "currency1", "type": "address" },
+            { "name": "fee", "type": "uint24" },
+            { "name": "tickSpacing", "type": "int24" },
+            { "name": "hooks", "type": "address" }
+          ],
+          "name": "poolKey",
+          "type": "tuple"
+        },
+        { "name": "zeroForOne", "type": "bool" },
+        { "name": "amountIn", "type": "uint128" },
+        { "name": "amountOutMinimum", "type": "uint128" },
+        { "name": "hookData", "type": "bytes" }
+      ],
+      [
+        [currency0, currency1, fee, tickSpacing, hooks],
+        zeroForOne,
+        String(amountUsdcWei),
+        minDaiOutWei,
+        '0x'
+      ]
+    );
 
-  // SETTLE_ALL: pay USDC into the pool. (currency, maxAmount)
-  const settleParams = web3.eth.abi.encodeParameters(
-    ['address', 'uint256'],
-    [TREASURY_ADDRESSES.USDC, String(amountUsdcWei)]
-  );
-  // TAKE_ALL: collect DAI to user. (currency, minAmount)
-  const takeParams = web3.eth.abi.encodeParameters(
-    ['address', 'uint256'],
-    [TREASURY_ADDRESSES.DAI, minDaiOutWei]
-  );
+    // SETTLE_ALL: pay USDC into the pool. (currency, maxAmount)
+    const settleParams = web3.eth.abi.encodeParameters(
+      ['address', 'uint256'],
+      [TREASURY_ADDRESSES.USDC, String(amountUsdcWei)]
+    );
+    // TAKE_ALL: collect DAI to user. (currency, minAmount)
+    const takeParams = web3.eth.abi.encodeParameters(
+      ['address', 'uint256'],
+      [TREASURY_ADDRESSES.DAI, minDaiOutWei]
+    );
 
-  // Universal Router input for V4_SWAP command: abi.encode(bytes actions, bytes[] params)
-  const v4Input = web3.eth.abi.encodeParameters(
-    ['bytes', 'bytes[]'],
-    [actions, [swapParams, settleParams, takeParams]]
-  );
+    // Universal Router input for V4_SWAP command: abi.encode(bytes actions, bytes[] params)
+    const v4Input = web3.eth.abi.encodeParameters(
+      ['bytes', 'bytes[]'],
+      [actions, [swapParams, settleParams, takeParams]]
+    );
 
-  const COMMAND_V4_SWAP = '0x10';
-  const router = new web3.eth.Contract(UNIVERSAL_ROUTER_ABI, TREASURY_ADDRESSES.UNIVERSAL_ROUTER);
-  const deadline = Math.floor(Date.now() / 1000) + 600;
+    const COMMAND_V4_SWAP = '0x10';
+    const router = new web3.eth.Contract(UNIVERSAL_ROUTER_ABI, TREASURY_ADDRESSES.UNIVERSAL_ROUTER);
+    const deadline = Math.floor(Date.now() / 1000) + 600;
 
-  Swal.fire({
-    icon: 'info',
-    title: translateThis('Swapping'),
-    text: translateThis('Swapping USDC for DAI on Uniswap V4...'),
-    showConfirmButton: false
-  });
-  await delay(500);
+    Swal.fire({
+      icon: 'info',
+      title: translateThis('Swapping'),
+      text: translateThis('Swapping USDC for DAI on Uniswap V4...'),
+      showConfirmButton: false
+    });
+    await delay(500);
 
-  await sendTx(router, "execute", [COMMAND_V4_SWAP, [v4Input], deadline.toString()], 600000, "0", false, false);
+    await sendTx(router, "execute", [COMMAND_V4_SWAP, [v4Input], deadline.toString()], 600000, "0", false, false);
 
-  const postDai = new BN(String(await dai.methods.balanceOf(myaccounts).call()));
-  const received = postDai.minus(preDai);
-  if (received.lt(new BN(minDaiOutWei))) {
-    // The on-chain V4 swap should already have reverted on slippage, but be
-    // defensive in case our balance read races a refresh.
-    throw new Error(translateThis('USDC -> DAI swap returned less than the expected minimum'));
+    const postDai = new BN(validation(DOMPurify.sanitize(await dai.methods.balanceOf(myaccounts).call())));
+    const received = postDai.minus(preDai);
+    if (received.lt(new BN(minDaiOutWei))) {
+      // The on-chain V4 swap should already have reverted on slippage, but be
+      // defensive in case our balance read races a refresh.
+      throw new Error(translateThis('USDC -> DAI swap returned less than the expected minimum'));
+    }
+    hideSpinner();
+    return received.integerValue(BN.ROUND_DOWN).toFixed(0);
+  } catch (swapErr) {
+    hideSpinner();
+    throw swapErr;
   }
-  return received.integerValue(BN.ROUND_DOWN).toFixed(0);
 }
 
 // Mandatory upgrade flow: when the user still holds shares in the previous
@@ -1506,7 +1506,7 @@ async function upgradeStableVaultIfNeeded() {
   const prevPool = new web3.eth.Contract(stableVaultABI, TREASURY_ADDRESSES.STABLE_POOL_PREVIOUS);
   let prevShares;
   try {
-    prevShares = String(await prevPool.methods.shares(myaccounts).call());
+    prevShares = validation(DOMPurify.sanitize(await prevPool.methods.shares(myaccounts).call()));
   } catch (e) {
     // The previous pool may not exist on test environments; treat as no upgrade.
     return false;
@@ -1540,8 +1540,8 @@ async function upgradeStableVaultIfNeeded() {
     throw new Error(translateThis('StableVault upgrade is required to proceed'));
   }
 
-  const dai = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.DAI);
-  const usdc = new web3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.USDC);
+  const dai = new web3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.DAI);
+  const usdc = new web3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.USDC);
 
   let preDai, preUsdc;
   showSpinner();
@@ -1549,8 +1549,8 @@ async function upgradeStableVaultIfNeeded() {
     // Step 1: clean dust on the previous pool if either side > $2 so the
     // value is folded into the user's withdrawal rather than left behind.
     try {
-      const oldPoolDaiBal = new BN(String(await dai.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL_PREVIOUS).call()));
-      const oldPoolUsdcBal = new BN(String(await usdc.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL_PREVIOUS).call()));
+      const oldPoolDaiBal = new BN(validation(DOMPurify.sanitize(await dai.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL_PREVIOUS).call())));
+      const oldPoolUsdcBal = new BN(validation(DOMPurify.sanitize(await usdc.methods.balanceOf(TREASURY_ADDRESSES.STABLE_POOL_PREVIOUS).call())));
       if (oldPoolDaiBal.gt(new BN('2000000000000000000')) || oldPoolUsdcBal.gt(new BN('2000000'))) {
         const cleanDeadline = Math.floor(Date.now() / 1000) + 300;
         Swal.fire({ icon: 'info', title: translateThis('Cleaning Dust'), text: translateThis('Folding pool dust into the position before withdrawing...'), showConfirmButton: false });
@@ -1564,8 +1564,8 @@ async function upgradeStableVaultIfNeeded() {
 
     // Capture pre-balances so we can compute exactly how much DAI/USDC the
     // withdraw produced (needed for the swap and deposit amounts).
-    preDai = new BN(String(await dai.methods.balanceOf(myaccounts).call()));
-    preUsdc = new BN(String(await usdc.methods.balanceOf(myaccounts).call()));
+    preDai = new BN(validation(DOMPurify.sanitize(await dai.methods.balanceOf(myaccounts).call())));
+    preUsdc = new BN(validation(DOMPurify.sanitize(await usdc.methods.balanceOf(myaccounts).call())));
 
     // Step 2: withdraw 100% from the previous pool.
     Swal.fire({ icon: 'info', title: translateThis('Withdrawing'), text: translateThis('Withdrawing your full position from the previous StableVault...'), showConfirmButton: false });
@@ -1584,8 +1584,8 @@ async function upgradeStableVaultIfNeeded() {
   // (per spec) so the user can recover manually rather than ending up in an
   // ambiguous state.
   try {
-    const postDaiBalance = new BN(String(await dai.methods.balanceOf(myaccounts).call()));
-    const postUsdcBalance = new BN(String(await usdc.methods.balanceOf(myaccounts).call()));
+    const postDaiBalance = new BN(validation(DOMPurify.sanitize(await dai.methods.balanceOf(myaccounts).call())));
+    const postUsdcBalance = new BN(validation(DOMPurify.sanitize(await usdc.methods.balanceOf(myaccounts).call())));
     const receivedDai = postDaiBalance.minus(preDai);
     const receivedUsdc = postUsdcBalance.minus(preUsdc);
 
@@ -1605,7 +1605,7 @@ async function upgradeStableVaultIfNeeded() {
 
     // Step 4: approve + deposit into the new pool.
     const newPool = new web3.eth.Contract(stableVaultABI, TREASURY_ADDRESSES.STABLE_POOL);
-    const allowance = String(await dai.methods.allowance(myaccounts, TREASURY_ADDRESSES.STABLE_POOL).call());
+    const allowance = validation(DOMPurify.sanitize(await dai.methods.allowance(myaccounts, TREASURY_ADDRESSES.STABLE_POOL).call()));
     if (new BN(allowance).lt(totalDaiToDeposit)) {
       Swal.fire({ icon: 'info', title: translateThis('Allowance'), text: translateThis('Authorizing DAI for the new StableVault...'), showConfirmButton: false });
       await sendTx(dai, "approve", [TREASURY_ADDRESSES.STABLE_POOL, totalDaiToDeposit.toFixed(0)], 100000, "0", false, false);
@@ -1861,46 +1861,17 @@ async function depositStableVault() {
     }
     
     // Approve DAI (check allowance first)
-    const daiContract = new earnState.polWeb3.eth.Contract(
-      [{
-        "constant": false,
-        "inputs": [
-          {"name": "spender", "type": "address"},
-          {"name": "amount", "type": "uint256"}
-        ],
-        "name": "approve",
-        "outputs": [{"name": "", "type": "bool"}],
-        "type": "function"
-      },
-      {
-        "constant": true,
-        "inputs": [
-          {"name": "owner", "type": "address"},
-          {"name": "spender", "type": "address"}
-        ],
-        "name": "allowance",
-        "outputs": [{"name": "", "type": "uint256"}],
-        "type": "function"
-      },
-      {
-        "constant": true,
-        "inputs": [{"name": "owner", "type": "address"}],
-        "name": "balanceOf",
-        "outputs": [{"name": "", "type": "uint256"}],
-        "type": "function"
-      }],
-      TREASURY_ADDRESSES.DAI
-    );
+    const daiContract = new earnState.polWeb3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.DAI);
 
     // If the user does not have enough DAI for the requested deposit but the
     // shortfall could be covered by swapping their USDC (within a 1%
     // slippage tolerance for the V4 swap), top up by converting just enough
     // USDC to DAI before continuing.
-    const userDaiBal = new BN(String(await daiContract.methods.balanceOf(myaccounts).call()));
+    const userDaiBal = new BN(validation(DOMPurify.sanitize(await daiContract.methods.balanceOf(myaccounts).call())));
     if (userDaiBal.lt(new BN(amountWei))) {
       const shortfallDaiWei = new BN(amountWei).minus(userDaiBal);
-      const usdcContract = new earnState.polWeb3.eth.Contract(STABLE_ERC20_ABI, TREASURY_ADDRESSES.USDC);
-      const userUsdcBal = new BN(String(await usdcContract.methods.balanceOf(myaccounts).call()));
+      const usdcContract = new earnState.polWeb3.eth.Contract(ERC20ABI, TREASURY_ADDRESSES.USDC);
+      const userUsdcBal = new BN(validation(DOMPurify.sanitize(await usdcContract.methods.balanceOf(myaccounts).call())));
       // USDC has 6 decimals, DAI has 18; at peg 1 USDC -> 1e12 DAI wei. Add
       // 1% to the USDC needed to cover swap slippage and rounding.
       const usdcEquivalentForShortfall = shortfallDaiWei.dividedBy('1e12').times('1.01').integerValue(BN.ROUND_UP);
@@ -1917,7 +1888,7 @@ async function depositStableVault() {
         // requested deposit (e.g. due to actual slippage exceeding the 1%
         // headroom we added), abort with a clear error so the user can
         // adjust their amount.
-        const postSwapDai = new BN(String(await daiContract.methods.balanceOf(myaccounts).call()));
+        const postSwapDai = new BN(validation(DOMPurify.sanitize(await daiContract.methods.balanceOf(myaccounts).call())));
         if (postSwapDai.lt(new BN(amountWei))) {
           throw new Error(translateThis('Even after swapping USDC, your DAI balance is below the requested deposit amount. Please reduce the amount and try again.'));
         }
@@ -1927,7 +1898,7 @@ async function depositStableVault() {
     }
 
     // Check existing allowance before requesting approval
-    const existingAllowance = String(await daiContract.methods.allowance(myaccounts, TREASURY_ADDRESSES.STABLE_POOL).call());
+    const existingAllowance = validation(DOMPurify.sanitize(await daiContract.methods.allowance(myaccounts, TREASURY_ADDRESSES.STABLE_POOL).call()));
     if (new BN(existingAllowance).lt(new BN(amountWei))) {
       Swal.fire({
         icon: 'info',
