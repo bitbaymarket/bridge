@@ -20,8 +20,11 @@ const TREASURY_ADDRESSES = {
   AUTOBRIDGE: '0x1c682Bcb55B9be1296eed6e60dc0e4832b05B05A',
   UNISWAP_V4_POOL_MANAGER: '0x67366782805870060151383F4BbFF9daB53e5cD6',
   UNISWAP_V4_STATE_VIEW: '0x5eA1bD7974c8A611cBAB0bDCAFcB1D9CC9b3BA5a',
-  // Polygon Universal Router (used for Uniswap V4 swaps)
-  UNIVERSAL_ROUTER: '0x418fBc4E6B5C694495c90C7cDE1f293EE444F10B',
+  // Uniswap V4 Universal Router on Polygon (per Uniswap V4 deployments docs).
+  // NOTE: Do not confuse with the BAY router used elsewhere in this codebase
+  // (0x418fBc4E6B5C694495c90C7cDE1f293EE444F10B) — that is BitBay's router,
+  // not Uniswap's.
+  UNIVERSAL_ROUTER: '0x1095692a6237d83C6a72F3F5eFEdb9A670C49223',
   // Permit2 (canonical address, same on every chain)
   PERMIT2: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
   // Uniswap V4 DAI/USDC 0.005% fee tier pool ID (fee=50, tickSpacing=1, hooks=0)
