@@ -1414,32 +1414,36 @@ async function swapUsdcForDai(amountUsdcWei) {
     const ACTION_TAKE_ALL = '0f';
     const actions = '0x' + ACTION_SWAP_EXACT_IN_SINGLE + ACTION_SETTLE_ALL + ACTION_TAKE_ALL;
 
-    // Encode SWAP_EXACT_IN_SINGLE params:
-    // (PoolKey poolKey, bool zeroForOne, uint128 amountIn, uint128 amountOutMinimum, bytes hookData)
+    // Encode SWAP_EXACT_IN_SINGLE params. The V4Router decodes `params` as
+    // `abi.encode(IV4Router.ExactInputSingleParams)` — i.e. a SINGLE struct
+    // argument (not the struct fields encoded as a flat tuple). The Polygon
+    // Universal Router (UR v2.0) uses the struct WITHOUT `maxHopSlippage`:
+    //   (PoolKey, bool zeroForOne, uint128 amountIn, uint128 amountOutMinimum, bytes hookData)
+    // See @uniswap/v4-sdk V4Planner.addSwapAction.
     const swapParams = web3.eth.abi.encodeParameters(
-      [
-        { "components": [
+      [{
+        "type": "tuple",
+        "components": [
+          { "name": "poolKey", "type": "tuple", "components": [
             { "name": "currency0", "type": "address" },
             { "name": "currency1", "type": "address" },
             { "name": "fee", "type": "uint24" },
             { "name": "tickSpacing", "type": "int24" },
             { "name": "hooks", "type": "address" }
-          ],
-          "name": "poolKey",
-          "type": "tuple"
-        },
-        { "name": "zeroForOne", "type": "bool" },
-        { "name": "amountIn", "type": "uint128" },
-        { "name": "amountOutMinimum", "type": "uint128" },
-        { "name": "hookData", "type": "bytes" }
-      ],
-      [
+          ]},
+          { "name": "zeroForOne", "type": "bool" },
+          { "name": "amountIn", "type": "uint128" },
+          { "name": "amountOutMinimum", "type": "uint128" },
+          { "name": "hookData", "type": "bytes" }
+        ]
+      }],
+      [[
         [currency0, currency1, fee, tickSpacing, hooks],
         zeroForOne,
         String(amountUsdcWei),
         minDaiOutWei,
         '0x'
-      ]
+      ]]
     );
 
     // SETTLE_ALL: pay USDC into the pool. (currency, maxAmount)
