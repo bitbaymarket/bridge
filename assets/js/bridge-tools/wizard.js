@@ -920,6 +920,21 @@ async function runAutomation() {
   automationRunning = true;
   automationCancelled = false;
   try {
+    // If a previous page-load was interrupted mid-step (e.g. the user
+    // refreshed during a sendTx), the `inProgressStep` marker will still
+    // be set from before. We have no way to determine whether the step
+    // actually completed on-chain, so cancel the run by marking failed.
+    var resumeData = getWizardData();
+    if (resumeData && resumeData.inProgressStep
+        && resumeData.status !== 'complete'
+        && resumeData.status !== 'failed') {
+      resumeData.failedAt = resumeData.inProgressStep;
+      resumeData.status = 'failed';
+      delete resumeData.inProgressStep;
+      setWizardData(resumeData);
+      showAutomationBanner();
+      return;
+    }
     while (true) {
       var data = getWizardData();
       if (!data || automationCancelled) break;
@@ -929,10 +944,16 @@ async function runAutomation() {
       // For steps that require signing, require a password-style login (loginType===2)
       // or that sendTx can prompt Metamask. sendTx handles both; rely on it to throw.
       try {
+        // Persist an in-progress marker before invoking the step so that a
+        // mid-step interruption (page refresh, tab close, crash) can be
+        // detected on resume above and treated as a cancel.
+        data.inProgressStep = data.status;
+        setWizardData(data);
         var nextStatus = await executeAutomationStep(data);
         if (nextStatus === null) break; // cancelled or data cleared
         var d = getWizardData();
         if (!d) break;
+        delete d.inProgressStep;
         d.status = nextStatus;
         setWizardData(d);
         showAutomationBanner();
@@ -942,6 +963,7 @@ async function runAutomation() {
         console.log('Automation step failed:', e);
         var d2 = getWizardData();
         if (d2) {
+          delete d2.inProgressStep;
           d2.failedAt = d2.status;
           d2.status = 'failed';
           setWizardData(d2);
