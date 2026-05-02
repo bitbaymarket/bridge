@@ -3250,6 +3250,12 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
     const txReceipt = await txPromise;
     const txHash = validation(DOMPurify.sanitize(txReceipt.transactionHash));
 
+    // When confirmation popups are muted, surface the txid to the console
+    // so the user still has a record of the broadcast tx.
+    if (!confCheck) {
+      console.log("TXID:", txHash);
+    }
+
     // Poll for confirmation
     const startTime = Date.now();
     while (true && confCheck) {
