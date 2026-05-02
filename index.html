@@ -3248,8 +3248,28 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
       });
     }
 
-    const txReceipt = await txPromise;
-    const txHash = validation(DOMPurify.sanitize(txReceipt.transactionHash));
+    // Get the tx hash as soon as the node returns it (immediately after
+    // broadcast) via the PromiEvent's `transactionHash` event. Do NOT await
+    // the PromiEvent itself: in web3.js v1.x `.send()`/`sendTransaction()`
+    // resolve only when its internal receipt poller succeeds, and that
+    // poller has a default `transactionPollingTimeout` of 750s. Awaiting it
+    // would bypass the manual 120s receipt poll below and leave the caller
+    // hung for up to 12+ minutes before throwing
+    // "Transaction was not mined within 750 seconds".
+    const txHash = await new Promise((resolve, reject) => {
+      txPromise.once('transactionHash', h => {
+        try {
+          resolve(validation(DOMPurify.sanitize(h)));
+        } catch (e) {
+          reject(e);
+        }
+      });
+      txPromise.once('error', err => reject(err));
+    });
+    // Suppress any later rejection from the PromiEvent's internal receipt
+    // poller (e.g. the eventual 750s timeout) so it doesn't surface as an
+    // unhandled promise rejection after we've already returned.
+    txPromise.catch(() => {});
 
     // When confirmation popups are muted, surface the txid to the console
     // so the user still has a record of the broadcast tx.
@@ -3320,7 +3340,7 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
           await new Promise(r => setTimeout(r, 1000));
           netSwitch = false;
         }
-        return showResult(txReceipt);
+        return showResult({ transactionHash: txHash });
       }
       await new Promise(r => setTimeout(r, 5000)); // poll every 5 seconds
     }
@@ -3329,7 +3349,7 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
       await new Promise(r => setTimeout(r, 1000));
       netSwitch = false;
     }
-    return showResult(txReceipt);
+    return showResult({ transactionHash: txHash });
   } catch (e) {
     await Swal.close();
     // Switch back provider if we switched for loginType 2
