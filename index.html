@@ -3253,7 +3253,14 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
     // Poll for confirmation
     const startTime = Date.now();
     while (true && confCheck) {
-      const receipt = await web3.eth.getTransactionReceipt(txHash);
+      let receipt;
+      try {
+        receipt = await web3.eth.getTransactionReceipt(txHash);
+      } catch (e) {
+        // Transient RPC hiccup (e.g. malformed { data: null } response).
+        // Log and keep polling; the 2-minute timeout below still applies.
+        console.log(e);
+      }
       if (receipt) {
         Swal.close();
         // Switch back provider if we switched for loginType 2
