@@ -629,6 +629,25 @@
             </div>
         </div>
     </div>
+
+    <div class="swapFields polygon-bridge-section logged-in" style="margin-top: 20px;">
+        <div class="boxTitle swapFirstCoinTxt">
+          <span class="no-invert">🌉</span>&nbsp;Polygon Bridge
+        </div>
+        <div class="callout">
+          Here you can send altcoins from Ethereum to Polygon.
+        </div>
+        <div class="swapField">
+          <div class="swapSelector btn" onclick="BridgeToPolygon()">
+            <img class="swapSelectorLogo" src="./assets/images/polygon.svg" style="width: 24px; height: 24px;">
+            <div class="swapSelectorText">Bridge to Polygon</div>
+          </div>
+          <div class="swapSelector btn btn-inside" onclick="showBridgeHistory()">
+            <span class="no-invert">📜</span>
+            <div class="swapSelectorText">History</div>
+          </div>
+        </div>
+    </div>
 </div>
           </div>
 
@@ -3088,7 +3107,8 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
         await new Promise(r => setTimeout(r, 1000));
         mmweb3 = new Web3(window.ethereum);
       }      
-      netSwitch = false;      
+      netSwitch = false;
+      return showResult(txPromise);
     } catch (e) {
       if (switchedNetwork) {
         try {
@@ -3449,14 +3469,42 @@ async function checkbalances() {
         }
     }    
     if (netname == "unknown") {
-        //document.getElementById("text1").innerHTML = "Unsupported network";
-        Swal.fire({
-            icon: 'warning',
-            title: translateThis('Error'),
-            text: translateThis('Unsupported network.'),
-            confirmButtonText: translateThis('Close')
-        });
-        //modalDialog('Connect', "Unsupported network.", "danger");
+        // If the user is connected via MetaMask on an unsupported chain, offer
+        // to switch them back to Polygon and verify the switch took effect.
+        if (loginType == 1 && typeof window.ethereum !== 'undefined') {
+            const { isConfirmed } = await Swal.fire({
+                icon: 'warning',
+                title: translateThis('Unsupported network'),
+                text: translateThis('Please switch to the Polygon network to continue.'),
+                showCancelButton: true,
+                confirmButtonText: translateThis('Switch to Polygon'),
+                cancelButtonText: translateThis('Close')
+            });
+            if (isConfirmed) {
+                try {
+                    await window.ethereum.request({
+                        method: 'wallet_switchEthereumChain',
+                        params: [{ chainId: '0x89' }],
+                    });
+                    await new Promise(r => setTimeout(r, 1000));
+                    var chainId2 = await mmweb3.eth.net.getId();
+                    if (chainId2 == "137") {
+                        location.reload();
+                        return;
+                    }
+                    await Swal.fire(translateThis('Network Switch Required'), translateThis('Polygon was not selected. Please select Polygon within MetaMask to continue.'));
+                } catch (e) {
+                    await Swal.fire(translateThis('Network Switch Required'), translateThis('Unable to switch to Polygon. Please select Polygon within MetaMask to continue.'));
+                }
+            }
+        } else {
+            Swal.fire({
+                icon: 'warning',
+                title: translateThis('Error'),
+                text: translateThis('Unsupported network.'),
+                confirmButtonText: translateThis('Close')
+            });
+        }
         return;
     }
     gasPrice = "20000000000";
@@ -6062,6 +6110,210 @@ async function copyNonce() {
     } else {
         navigator.clipboard.writeText(JSON.stringify(jsonreceipt));
     }
+}
+
+// Polygon bridge endpoints (official, third-party — not BitBay)
+//   POL  -> Plasma deposit manager (depositERC20ForUser)
+//   DAI  -> PoS RootChainManager (depositFor) via the ERC20Predicate proxy
+var POLYGON_BRIDGE = {
+    POL_ROOT:           '0x455e53CBB86018Ac2B8092FdCd39d8444aFFC3F6',
+    DAI_ROOT:           '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+    PLASMA_DEPOSIT_MGR: '0x401F6c983eA34274ec46f84D70b31C151321188b',
+    POS_ROOT_MANAGER:   '0xA0c68C638235ee32657e8f720a23ceC1bFc77C77',
+    POS_ERC20_PREDICATE:'0x40ec5B33f54e0E8A33A975908C5BA1c14e5BbbDf'
+};
+var POLYGON_BRIDGE_ABI = [
+    { "inputs":[{"name":"_token","type":"address"},{"name":"_user","type":"address"},{"name":"_amount","type":"uint256"}],"name":"depositERC20ForUser","outputs":[],"stateMutability":"nonpayable","type":"function" },
+    { "inputs":[{"name":"user","type":"address"},{"name":"rootToken","type":"address"},{"name":"depositData","type":"bytes"}],"name":"depositFor","outputs":[],"stateMutability":"nonpayable","type":"function" }
+];
+var POLYGON_BRIDGE_ERC20_ABI = [
+    { "constant":true,"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function" },
+    { "constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function" },
+    { "constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"type":"function" }
+];
+
+function getBridgeTxidsKey() { return myaccounts + 'bridgetxids'; }
+
+function loadBridgeTxids() {
+    try { return JSON.parse(localStorage.getItem(getBridgeTxidsKey()) || '[]'); }
+    catch (e) { return []; }
+}
+
+function saveBridgeTxid(entry) {
+    var list = loadBridgeTxids();
+    list.unshift(entry);
+    localStorage.setItem(getBridgeTxidsKey(), JSON.stringify(list));
+}
+
+async function BridgeToPolygon() {
+    if (!isConnected || !myaccounts) {
+        return Swal.fire(translateThis('Not connected'), translateThis('Please connect your wallet first.'), 'warning');
+    }
+    if (currentChainId == "11155111") {
+        return Swal.fire(translateThis('Not available on testnet'), translateThis('The Polygon bridge is only available on mainnet.'), 'warning');
+    }
+
+    // Read balances for POL and DAI from Ethereum mainnet so the user can see
+    // what they have to work with. We use the same Ethereum web3 helper the
+    // automation wizard uses.
+    var ethW3;
+    try {
+        ethW3 = (typeof getEthWeb3Instance === 'function') ? getEthWeb3Instance() : new Web3(getEthereumRpc());
+    } catch (e) {
+        ethW3 = new Web3(getEthereumRpc());
+    }
+    var polErc = new ethW3.eth.Contract(POLYGON_BRIDGE_ERC20_ABI, POLYGON_BRIDGE.POL_ROOT);
+    var daiErc = new ethW3.eth.Contract(POLYGON_BRIDGE_ERC20_ABI, POLYGON_BRIDGE.DAI_ROOT);
+    var polBalRaw = '0';
+    var daiBalRaw = '0';
+    try {
+        polBalRaw = validation(DOMPurify.sanitize(await polErc.methods.balanceOf(myaccounts).call()));
+        daiBalRaw = validation(DOMPurify.sanitize(await daiErc.methods.balanceOf(myaccounts).call()));
+    } catch (e) {
+        return Swal.fire(translateThis('Network error'), translateThis('Unable to read your Ethereum balances. Please try again.'), 'error');
+    }
+    var polBal = stripZeros(new BigNumber(polBalRaw).dividedBy('1e18').toFixed(6));
+    var daiBal = stripZeros(new BigNumber(daiBalRaw).dividedBy('1e18').toFixed(6));
+
+    var pickHtml =
+        '<p style="text-align:left;">' + translateThis('Select a token to bridge from Ethereum to Polygon and enter an amount.') + '</p>' +
+        '<div style="text-align:left;font-size:14px;margin:8px 0;">' +
+            '<div><strong>' + translateThis('POL balance') + ':</strong> ' + polBal + '</div>' +
+            '<div><strong>' + translateThis('DAI balance') + ':</strong> ' + daiBal + '</div>' +
+        '</div>' +
+        '<select id="bridgeTokenSel" class="swal2-select" style="display:block;margin:8px auto;">' +
+            '<option value="POL">POL</option>' +
+            '<option value="DAI">DAI</option>' +
+        '</select>' +
+        '<input id="bridgeAmt" type="text" class="swal2-input" placeholder="0.0">' +
+        '<div class="callout" style="text-align:left;margin-top:10px;font-size:13px;">' +
+            '<p><strong>' + translateThis('Heads up') + ':</strong> ' + translateThis('This is the official third-party Polygon bridge — it is not associated with BitBay. For any questions about the bridge, please reach out to Polygon directly.') + '</p>' +
+            '<p>' + translateThis('Funds can take up to an hour to show on the Polygon side. By proceeding you acknowledge that you understand the risks of using bridges and second-layer networks.') + '</p>' +
+        '</div>';
+
+    var pick = await Swal.fire({
+        title: '🌉 ' + translateThis('Bridge to Polygon'),
+        html: pickHtml,
+        showCancelButton: true,
+        confirmButtonText: translateThis('Continue'),
+        cancelButtonText: translateThis('Cancel'),
+        focusConfirm: false,
+        preConfirm: function() {
+            var tokenSel = document.getElementById('bridgeTokenSel').value;
+            var amtRaw = document.getElementById('bridgeAmt').value.trim();
+            var amtNum = parseFloat(amtRaw);
+            if (!amtRaw || isNaN(amtNum) || amtNum <= 0) {
+                Swal.showValidationMessage(translateThis('Please enter a valid amount greater than zero.'));
+                return false;
+            }
+            var availWei = tokenSel === 'POL' ? polBalRaw : daiBalRaw;
+            var amtWei = new BigNumber(amtRaw).times('1e18').integerValue(BigNumber.ROUND_DOWN);
+            if (amtWei.gt(new BigNumber(availWei))) {
+                Swal.showValidationMessage(translateThis('Amount exceeds your available balance.'));
+                return false;
+            }
+            return { token: tokenSel, amount: amtRaw };
+        }
+    });
+    if (!pick.isConfirmed || !pick.value) return;
+
+    var token  = pick.value.token;
+    var amount = pick.value.amount;
+    var amountWei = new BigNumber(amount).times('1e18').integerValue(BigNumber.ROUND_DOWN).toFixed(0);
+
+    var confirmHtml =
+        '<p style="text-align:left;">' + translateThis('You are about to bridge') + ' <strong>' + amount + ' ' + token + '</strong> ' + translateThis('from Ethereum to Polygon through the official Polygon bridge contracts.') + '</p>' +
+        '<p style="text-align:left;font-size:13px;">' + translateThis('Funds can take up to an hour to show on the other side. This is the official third-party bridge and is not associated with BitBay — for any questions about the bridge, contact Polygon directly.') + '</p>';
+    var confirm = await Swal.fire({
+        icon: 'question',
+        title: translateThis('Confirm bridge'),
+        html: confirmHtml,
+        showCancelButton: true,
+        confirmButtonText: translateThis('Bridge now'),
+        cancelButtonText: translateThis('Cancel')
+    });
+    if (!confirm.isConfirmed) return;
+
+    // Build contracts on the client web3 — sendTx will wrap them in mmweb3 and
+    // perform the network switch to Ethereum, send the tx, and switch back.
+    var rootToken = token === 'POL' ? POLYGON_BRIDGE.POL_ROOT : POLYGON_BRIDGE.DAI_ROOT;
+    var spender   = token === 'POL' ? POLYGON_BRIDGE.PLASMA_DEPOSIT_MGR : POLYGON_BRIDGE.POS_ERC20_PREDICATE;
+    var bridgeAddr= token === 'POL' ? POLYGON_BRIDGE.PLASMA_DEPOSIT_MGR : POLYGON_BRIDGE.POS_ROOT_MANAGER;
+
+    var tokenContract  = new web3.eth.Contract(POLYGON_BRIDGE_ERC20_ABI, rootToken);
+    var bridgeContract = new web3.eth.Contract(POLYGON_BRIDGE_ABI, bridgeAddr);
+
+    try {
+        // Approve the bridge spender if the current allowance is insufficient.
+        // Allowance must be read on Ethereum, so we use the read-only ETH web3.
+        var ethTokenRO = new ethW3.eth.Contract(POLYGON_BRIDGE_ERC20_ABI, rootToken);
+        var allowance  = new BigNumber(validation(DOMPurify.sanitize(await ethTokenRO.methods.allowance(myaccounts, spender).call())));
+        if (allowance.lt(amountWei)) {
+            await sendTx(tokenContract, 'approve', [spender, amountWei], 100000, '0', false, true, false);
+        }
+
+        var txid;
+        if (token === 'POL') {
+            txid = await sendTx(bridgeContract, 'depositERC20ForUser',
+                [POLYGON_BRIDGE.POL_ROOT, myaccounts, amountWei], 300000, '0', false, true, true);
+        } else {
+            var depositData = web3.eth.abi.encodeParameter('uint256', amountWei);
+            txid = await sendTx(bridgeContract, 'depositFor',
+                [myaccounts, POLYGON_BRIDGE.DAI_ROOT, depositData], 300000, '0', false, true, true);
+        }
+
+        if (txid && typeof txid === 'string' && txid.length > 0 && txid !== 'Transaction submitted') {
+            saveBridgeTxid({
+                token: token,
+                amount: amount,
+                txid: txid,
+                time: Date.now()
+            });
+        }
+
+        var doneHtml =
+            '<p>' + translateThis('Your transaction has been routed through the official Polygon bridge contracts.') + '</p>' +
+            (txid ? '<p style="font-size:13px;word-break:break-all;"><strong>TXID:</strong> <code>' + DOMPurify.sanitize(String(txid)) + '</code></p>' : '') +
+            '<p style="font-size:13px;">' + translateThis('You can confirm your transaction using the transaction ID. Funds may take up to an hour to show on the Polygon side.') + '</p>';
+        await Swal.fire({
+            icon: 'success',
+            title: translateThis('Bridge submitted'),
+            html: doneHtml,
+            confirmButtonText: translateThis('Close')
+        });
+    } catch (e) {
+        await showScrollableError(translateThis('Bridge failed'), e && e.message ? e.message : String(e));
+    }
+}
+
+async function showBridgeHistory() {
+    if (!myaccounts) {
+        return Swal.fire(translateThis('Not connected'), translateThis('Please connect your wallet first.'), 'warning');
+    }
+    var list = loadBridgeTxids();
+    var body;
+    if (!list.length) {
+        body = '<p>' + translateThis('No bridge transactions recorded for this account yet.') + '</p>';
+    } else {
+        var rows = list.map(function(e) {
+            var when = '';
+            try { when = new Date(e.time).toLocaleString(); } catch (err) { when = ''; }
+            var safeTxid   = DOMPurify.sanitize(String(e.txid || ''));
+            var safeToken  = DOMPurify.sanitize(String(e.token || ''));
+            var safeAmount = DOMPurify.sanitize(String(e.amount || ''));
+            return '<div style="border-bottom:1px dashed #ccc;padding:6px 0;">' +
+                       '<div><strong>' + safeAmount + ' ' + safeToken + '</strong>' + (when ? ' &mdash; <span style="color:#666;">' + when + '</span>' : '') + '</div>' +
+                       '<div style="font-family:monospace;font-size:12px;word-break:break-all;">' + safeTxid + '</div>' +
+                   '</div>';
+        }).join('');
+        body = '<div style="max-height:300px;overflow-y:auto;text-align:left;font-size:14px;">' + rows + '</div>';
+    }
+    await Swal.fire({
+        title: '📜 ' + translateThis('Polygon Bridge History'),
+        html: body,
+        confirmButtonText: translateThis('Close'),
+        width: 520
+    });
 }
 
 //Valid pair hash for known AMM types: 0x5b83bdbcc56b2e630f2807bbadd2b0c21619108066b92a58de081261089e9ce5
