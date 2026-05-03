@@ -1845,34 +1845,8 @@ async function depositStableVault() {
     }
     
     // Approve DAI (check allowance first)
-    const daiContract = new earnState.polWeb3.eth.Contract(
-      [{
-        "constant": false,
-        "inputs": [
-          {"name": "spender", "type": "address"},
-          {"name": "amount", "type": "uint256"}
-        ],
-        "name": "approve",
-        "outputs": [{"name": "", "type": "bool"}],
-        "type": "function"
-      },
-      {
-        "constant": true,
-        "inputs": [
-          {"name": "owner", "type": "address"},
-          {"name": "spender", "type": "address"}
-        ],
-        "name": "allowance",
-        "outputs": [{"name": "", "type": "uint256"}],
-        "type": "function"
-      }],
-      TREASURY_ADDRESSES.DAI
-    );
-
-    // If the user does not have enough DAI for the requested deposit but the
-    // shortfall could be covered by swapping their USDC (within a 1%
-    // slippage tolerance for the V4 swap), top up by converting just enough
-    // USDC to DAI before continuing.
+    const daiContract = new earnState.polWeb3.eth.Contract(ERC20ABI,TREASURY_ADDRESSES.DAI);
+    // Check to see if USDC can cover the difference
     const userDaiBal = new BN(validation(DOMPurify.sanitize(await daiContract.methods.balanceOf(myaccounts).call())));
     if (userDaiBal.lt(new BN(amountWei))) {
       const shortfallDaiWei = new BN(amountWei).minus(userDaiBal);
