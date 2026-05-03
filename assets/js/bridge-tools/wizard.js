@@ -1,7 +1,5 @@
 // Automation Wizard for BitBay Bridge
 
-(function() {
-
 var wizardState = {
   polPrice: 0,
   ethPrice: 0,
@@ -236,9 +234,22 @@ window.launchAutomationWizard = async function() {
   if (!unlocked) return;
 
   showSpinner();
+  var lidoMinDays = 1;
+  var lidoMaxDays = 180;
   try {
     await fetchPrices();
     await fetchBalances();
+    try {
+      var ethRpcW = typeof getEthereumRpc === 'function' ? getEthereumRpc() : 'https://eth.drpc.org/';
+      var ethW3W = new Web3(ethRpcW);
+      var lidoCtr = new ethW3W.eth.Contract(lidoVaultABI, TREASURY_ADDRESSES.LIDO_VAULT);
+      var minRaw = parseInt(validation(DOMPurify.sanitize(await lidoCtr.methods.mindays().call())));
+      var maxRaw = parseInt(validation(DOMPurify.sanitize(await lidoCtr.methods.maxdays().call())));
+      if (!isNaN(minRaw) && minRaw > 0) lidoMinDays = minRaw;
+      if (!isNaN(maxRaw) && maxRaw > 0) lidoMaxDays = maxRaw;
+    } catch(le) {
+      console.log('Wizard lido bounds fetch error:', le);
+    }
   } catch(e) {
     console.log('Wizard price/balance fetch error:', e);
   }
@@ -261,7 +272,7 @@ window.launchAutomationWizard = async function() {
   var accordionHTML =
     buildAccordionItem('pol', '⛽', translateThis('Get Polygon for Gas'),
       polRec + ' ' + translateThis('Current POL price') + ': ' + polPriceDisplay +
-      '. ' + translateThis('This will acquire POL for gas fees with ±5% slippage based on market rate.'),
+      '. ' + translateThis('This will acquire POL for gas fees with ±10% slippage based on market rate.'),
       polChecked, '') +
 
     buildAccordionItem('lido', '🏦', translateThis('Hold ETH Long Term (Lido)'),
@@ -270,12 +281,12 @@ window.launchAutomationWizard = async function() {
       sliderHTML('lido', translateThis('Allocation')) +
       '<div style="margin-top:6px;">' +
         '<label style="font-size:0.85em;">' + translateThis('Lock Period (days)') + ':</label>' +
-        '<input type="number" id="wizLidoDays" value="180" min="1" max="1095" class="swal2-input" style="width:100px;height:30px;font-size:0.9em;padding:4px;">' +
+        '<input type="number" id="wizLidoDays" value="180" min="'+lidoMinDays+'" max="'+lidoMaxDays+'" class="swal2-input" style="width:100px;height:30px;font-size:0.9em;padding:4px;">' +
         '<span style="font-size:0.8em;color:#777;margin-left:6px;">' + translateThis('Default: 180 days (≈6 months)') + '</span>' +
       '</div>') +
 
     buildAccordionItem('stable', '💱', translateThis('Earn Yield at Uniswap (StableVault)'),
-      translateThis('Earn a decentralized and reliable profit from stablecoin pair trading fees where the position is automatically managed to maximize profits while supporting the ecosystem. Includes ±5% slippage for the trade to get DAI.'),
+      translateThis('Earn a decentralized and reliable profit from stablecoin pair trading fees where the position is automatically managed to maximize profits while supporting the ecosystem. Includes ±7% slippage for the trade to get DAI.'),
       true,
       sliderHTML('stable', translateThis('Allocation'))) +
 
@@ -321,9 +332,25 @@ window.launchAutomationWizard = async function() {
           }
         })(ids[i]);
       }
+      for (var c = 0; c < ids.length; c++) {
+        (function(id) {
+          var cb = document.getElementById('wiz_' + id);
+          if (cb && sliders[id]) {
+            cb.addEventListener('change', function() {
+              if (!cb.checked) {
+                sliders[id].value = 0;
+              } else if (parseInt(sliders[id].value) === 0) {
+                sliders[id].value = 25;
+              }
+              adjustAllocations(sliders, id);
+            });
+          }
+        })(ids[c]);
+      }
       updateAllocationDisplay(sliders);
     },
     preConfirm: function() {
+      var lidoDaysParsed = parseInt(document.getElementById('wizLidoDays').value);
       var choices = {
         pol: document.getElementById('wiz_pol').checked,
         lido: document.getElementById('wiz_lido').checked,
@@ -334,13 +361,20 @@ window.launchAutomationWizard = async function() {
         allocStable: parseInt(document.getElementById('wizSlider_stable').value) || 0,
         allocBay: parseInt(document.getElementById('wizSlider_bay').value) || 0,
         allocBayr: parseInt(document.getElementById('wizSlider_bayr').value) || 0,
-        lidoDays: parseInt(document.getElementById('wizLidoDays').value) || 180
+        lidoDays: lidoDaysParsed
       };
       if (!choices.pol && !choices.lido && !choices.stable && !choices.bay && !choices.bayr) {
         Swal.close();
         Swal.fire(translateThis('Nothing Selected'), translateThis('No options were selected. The wizard has been closed.'), 'info');
         return false;
       }
+      if (choices.lido) {
+        if (isNaN(lidoDaysParsed) || lidoDaysParsed < lidoMinDays || lidoDaysParsed > lidoMaxDays) {
+          Swal.showValidationMessage(translateThis('Lock period must be between') + ' ' + lidoMinDays + ' ' + translateThis('and') + ' ' + lidoMaxDays + ' ' + translateThis('days'));
+          return false;
+        }
+      }
+      console.log(choices)
       return choices;
     }
   });
@@ -360,7 +394,7 @@ window.launchAutomationWizard = async function() {
   disclaimers.push('<li>' + translateThis('This website is not an exchange and does not take custody of user funds or charge any fees. It is designed to maximize your security by keeping all actions client-side. Although Uniswap/Curve/etc are generally considered safe, we recommend reviewing the source code of any DEX and understanding the associated risks. This website is open source and has been audited, but for maximum security we encourage users to download the code from GitHub and run it locally.') + '</li>');
 
   if (choices.pol) {
-    disclaimers.push('<li><strong>' + translateThis('Polygon Gas') + ':</strong> ' + translateThis('A portion of your ETH will be used to acquire POL for gas. The final amount may vary ±5% due to slippage.') + '</li>');
+    disclaimers.push('<li><strong>' + translateThis('Polygon Gas') + ':</strong> ' + translateThis('A portion of your ETH will be used to acquire POL for gas. The final amount may vary ±10% due to slippage.') + '</li>');
   }
   if (choices.lido) {
     disclaimers.push('<li><strong>' + translateThis('Lido HODL') + ':</strong> ' + translateThis('By proceeding, you acknowledge that the desired ETH will be traded into Lido Staked ETH through the decentralized exchange Curve. 100% of staking yields go to BAY stakers. Your principal is locked until unlock date. Lido is well-audited although you should be aware of third party contract risks.') + '</li>');
@@ -496,13 +530,13 @@ window.launchAutomationWizard = async function() {
     summaryHTML += '<tr style="border-bottom:1px solid #eee;color:#777;"><td style="padding:4px;">' + gasLabel + '</td><td style="text-align:right;padding:4px;">' + totalGasCostETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + gasCostUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.pol) {
-    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">⛽ ' + translateThis('Get POL') + ' (±5%)</td><td style="text-align:right;padding:4px;">' + polCostETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + polCostUSD.toFixed(2) + '</td></tr>';
+    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">⛽ ' + translateThis('Get POL') + ' (±10%)</td><td style="text-align:right;padding:4px;">' + polCostETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + polCostUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.lido) {
     summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">🏦 ' + translateThis('Lido HODL') + ' (' + choices.lidoDays + ' ' + translateThis('days') + ')</td><td style="text-align:right;padding:4px;">' + lidoETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + lidoUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.stable) {
-    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">💱 ' + translateThis('StableVault') + ' (±5%)</td><td style="text-align:right;padding:4px;">' + stableETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + stableUSD.toFixed(2) + '</td></tr>';
+    summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">💱 ' + translateThis('StableVault') + ' (±7%)</td><td style="text-align:right;padding:4px;">' + stableETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + stableUSD.toFixed(2) + '</td></tr>';
   }
   if (choices.bay) {
     summaryHTML += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">🪙 ' + translateThis('Buy BAY') + ' (±10%)</td><td style="text-align:right;padding:4px;">' + bayETH.toFixed(6) + '</td><td style="text-align:right;padding:4px;">$' + bayUSD.toFixed(2) + '</td></tr>';
@@ -711,7 +745,6 @@ async function openAutomationStatusDialog() {
 }
 
 window.checkAutomationOnLogin = async function() {
-  if(true) return;
   if (!myaccounts || loginType === 0) return;
 
   var data = getWizardData();
@@ -730,6 +763,7 @@ window.checkAutomationOnLogin = async function() {
         width: 550
       });
     }
+    var unlocked = await ensureWalletUnlocked();
     runAutomation();
     return;
   }
@@ -811,7 +845,8 @@ var MAINNET_ADDR = {
   DAI:         '0x6B175474E89094C44Da98b954EedeAC495271d0F',
   POL:         '0x455e53CBB86018Ac2B8092FdCd39d8444aFFC3F6',
   V3_ROUTER:   '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45', // Uniswap SwapRouter02
-  AUTO_BRIDGE: '0x5D618a7eBed1e0281Ae3B92eF99c4fDD41432A6a'
+  AUTO_BRIDGE: '0xE68446f9809fcBa0af2bD9da2cb06a4248897Fed',
+  PLASMA_DEPOSIT_MANAGER: '0x401F6c983eA34274ec46f84D70b31C151321188b'
 };
 // WETH/DAI V3 pool 0x60594a405d53811d3BC4766596EFD80fd545A270 is the 0.05% tier
 var V3_FEE_ETH_DAI = 500;
@@ -919,9 +954,15 @@ async function runAutomation() {
   if (automationRunning) return;
   automationRunning = true;
   automationCancelled = false;
+  var data = getWizardData();
+  if(data && data.inProgressStep) {
+    await Swal.fire(translateThis("Automation cancelled"),translateThis("The automation was interrupted during a previous step. For your security the process has been cancelled to avoid repeating tasks. Remaining tasks should be handled manually."));
+    data.status = 'failed';
+    setWizardData(data);
+  }
   try {
     while (true) {
-      var data = getWizardData();
+      data = getWizardData();
       if (!data || automationCancelled) break;
       if (data.status === 'complete' || data.status === 'failed') break;
       // If wallet is Metamask-only and locked (no private key), we can still poll
@@ -929,11 +970,17 @@ async function runAutomation() {
       // For steps that require signing, require a password-style login (loginType===2)
       // or that sendTx can prompt Metamask. sendTx handles both; rely on it to throw.
       try {
+        if(data.status != 'pending' && data.status != 'awaiting_polygon') {
+          data.inProgressStep = true;
+          setWizardData(data);
+        }
+        await wizardSleep(10000);
         var nextStatus = await executeAutomationStep(data);
         if (nextStatus === null) break; // cancelled or data cleared
         var d = getWizardData();
         if (!d) break;
         d.status = nextStatus;
+        d.inProgressStep = false;
         setWizardData(d);
         showAutomationBanner();
         if (nextStatus === 'complete' || nextStatus === 'failed') break;
@@ -942,6 +989,7 @@ async function runAutomation() {
         console.log('Automation step failed:', e);
         var d2 = getWizardData();
         if (d2) {
+          d2.inProgressStep = false;
           d2.failedAt = d2.status;
           d2.status = 'failed';
           setWizardData(d2);
@@ -953,6 +1001,38 @@ async function runAutomation() {
   } finally {
     automationRunning = false;
   }
+}
+
+//We need a more strict balance update in case a node is stale and to avoid race conditions to get accurate values
+async function waitForBalanceUpdate(web3, erc20, account, balBefore, anticipated) {
+  var BN = BigNumber;
+  var before = new BN(balBefore);
+  var expected = before.plus(new BN(anticipated));
+  // Lower acceptance bound: at least 85% of the anticipated delta arrived.
+  var minAcceptable = before.plus(new BN(anticipated).times('85').dividedBy('100').integerValue(BN.ROUND_DOWN));
+
+  var TIMEOUT_MS = 3 * 60 * 1000;
+  var INTERVAL_MS = 10 * 1000;
+  var deadline = Date.now() + TIMEOUT_MS;
+  var lastBlock = 0;
+
+  while (Date.now() < deadline) {
+    try {
+      var blk = parseInt(validation(DOMPurify.sanitize(await web3.eth.getBlockNumber())));
+      if (blk > lastBlock) {
+        lastBlock = blk;
+        var raw = validation(DOMPurify.sanitize(await erc20.methods.balanceOf(account).call({}, blk)));
+        var cur = new BN(raw);
+        if (cur.gt(before) && cur.gte(minAcceptable)) return cur;
+      }
+      // else: block hasn't advanced, treat read as stale and retry next tick
+    } catch (e) {
+      // transient RPC error; retry on the next poll
+      console.log('waitForBalanceUpdate poll error:', e);
+    }
+    await wizardSleep(INTERVAL_MS);
+  }
+  throw new Error('Balance update timed out');
 }
 
 async function executeAutomationStep(data) {
@@ -1006,7 +1086,14 @@ async function stepBuyPol(data) {
 
   // Expected POL wei = amountIn * (ethPx / polPx); POL has 18 decimals like ETH.
   var expectedOut = amountIn.times(ethPx).dividedBy(polPx).integerValue(BN.ROUND_DOWN);
-  var minOut = expectedOut.times('95').dividedBy('100').integerValue(BN.ROUND_DOWN);
+  var polRaw = parseInt(await getPOLPrice()) / 1e8;
+  var ethRaw = parseInt(await getWETHPrice()) / 1e8;
+  if (!polRaw || isNaN(polRaw) || polRaw <= 0) throw new Error('Unable to fetch live POL price, trade cancelled');
+  if (!ethRaw || isNaN(ethRaw) || ethRaw <= 0) throw new Error('Unable to fetch live ETH price, trade cancelled');
+  var expectedOut2 = amountIn.times(ethRaw).dividedBy(polRaw).integerValue(BN.ROUND_DOWN);
+  var minOut = expectedOut.times('90').dividedBy('100').integerValue(BN.ROUND_DOWN);
+  var minOut2 = expectedOut2.times('98').dividedBy('100').integerValue(BN.ROUND_DOWN);
+  if(minOut2.lt(minOut)) throw new Error('Prices have changed, automated trade was cancelled')
 
   var polErc20 = new ethW3.eth.Contract(WIZ_ERC20_ABI, MAINNET_ADDR.POL);
   var balBefore = new BN(validation(DOMPurify.sanitize(await polErc20.methods.balanceOf(myaccounts).call())));
@@ -1018,12 +1105,13 @@ async function stepBuyPol(data) {
     V3_FEE_ETH_POL,
     myaccounts,
     amountIn.toFixed(0),
-    minOut.toFixed(0),
+    minOut2.toFixed(0),
     '0'
   ];
   await sendTx(swapRouter, 'exactInputSingle', [params], ETH_GAS_V3_SWAP, amountIn.toFixed(0), false, true, false);
 
-  var balAfter = new BN(validation(DOMPurify.sanitize(await polErc20.methods.balanceOf(myaccounts).call())));
+
+  var balAfter = await waitForBalanceUpdate(ethW3, polErc20, myaccounts, balBefore, expectedOut);
   var received = balAfter.minus(balBefore);
   if (received.lte(0)) throw new Error('POL swap completed but no POL received');
 
@@ -1081,7 +1169,12 @@ async function stepBuyDai(data) {
 
   // Expected DAI wei = amountIn * ethPx (DAI has 18 decimals, same as ETH).
   var expectedOut = amountIn.times(ethPx).integerValue(BN.ROUND_DOWN);
-  var minOut = expectedOut.times('90').dividedBy('100').integerValue(BN.ROUND_DOWN);
+  var ETHRaw = parseInt(await getWETHPrice()) / 1e8;
+  if (!ETHRaw || isNaN(ETHRaw) || ETHRaw <= 0) throw new Error('Unable to fetch live ETH price, trade cancelled');
+  var expectedOut2 = amountIn.times(ETHRaw).integerValue(BN.ROUND_DOWN);
+  var minOut = expectedOut.times('93').dividedBy('100').integerValue(BN.ROUND_DOWN);
+  var minOut2 = expectedOut2.times('98').dividedBy('100').integerValue(BN.ROUND_DOWN);
+  if(minOut2.lt(minOut)) throw new Error('Prices have changed, automated trade was cancelled')
 
   var daiErc20 = new ethW3.eth.Contract(WIZ_ERC20_ABI, MAINNET_ADDR.DAI);
   var balBefore = new BN(validation(DOMPurify.sanitize(await daiErc20.methods.balanceOf(myaccounts).call())));
@@ -1093,12 +1186,12 @@ async function stepBuyDai(data) {
     V3_FEE_ETH_DAI,
     myaccounts,
     amountIn.toFixed(0),
-    minOut.toFixed(0),
+    minOut2.toFixed(0),
     '0'
   ];
   await sendTx(swapRouter, 'exactInputSingle', [params], ETH_GAS_V3_SWAP, amountIn.toFixed(0), false, true, false);
 
-  var balAfter = new BN(validation(DOMPurify.sanitize(await daiErc20.methods.balanceOf(myaccounts).call())));
+  var balAfter = await waitForBalanceUpdate(ethW3, daiErc20, myaccounts, balBefore, expectedOut);
   var received = balAfter.minus(balBefore);
   if (received.lte(0)) throw new Error('DAI swap completed but no DAI received');
 
@@ -1108,6 +1201,30 @@ async function stepBuyDai(data) {
   d.received.dai = received.toFixed(0);
   setWizardData(d);
   return advanceStatus(d);
+}
+
+async function bridgePOL(amount) {
+  var BN = BigNumber;
+  var send = new BN(amount);
+  if (send.lte(0)) throw new Error('bridgePOL: amount must be > 0');
+  const PLASMA_DEPOSIT_MANAGER_ABI = [
+    { "inputs":[
+        {"name":"_token","type":"address"},
+        {"name":"_user","type":"address"},
+        {"name":"_amount","type":"uint256"}],
+      "name":"depositERC20ForUser",
+      "outputs":[],"stateMutability":"nonpayable","type":"function" }
+  ];
+  var ethW3  = getEthWeb3Instance();
+  var pol    = new ethW3.eth.Contract(WIZ_ERC20_ABI, MAINNET_ADDR.POL);
+  var bridge = new ethW3.eth.Contract(PLASMA_DEPOSIT_MANAGER_ABI, MAINNET_ADDR.PLASMA_DEPOSIT_MANAGER);
+  var bal = new BN(validation(DOMPurify.sanitize(await pol.methods.balanceOf(myaccounts).call())));
+  if (bal.lt(send)) throw new Error('Insufficient POL balance');
+  var allow = new BN(validation(DOMPurify.sanitize(await pol.methods.allowance(myaccounts, MAINNET_ADDR.PLASMA_DEPOSIT_MANAGER).call())));
+  if (allow.lt(send)) {
+    await sendTx(pol, 'approve', [MAINNET_ADDR.PLASMA_DEPOSIT_MANAGER, send.toFixed(0)], ETH_GAS_APPROVE, '0', false, true, false);
+  }
+  await sendTx(bridge, 'depositERC20ForUser', [MAINNET_ADDR.POL, myaccounts, send.toFixed(0)], ETH_GAS_BRIDGE_ERC, '0', false, true, false);
 }
 
 async function stepBridgeERC20(data, which) {
@@ -1139,17 +1256,18 @@ async function stepBridgeERC20(data, which) {
   // there; if less, treat as a short condition.
   var held = new BN(validation(DOMPurify.sanitize(await tokenErc20.methods.balanceOf(myaccounts).call())));
   if (held.lte(0)) {
-    // Already bridged in a prior attempt; nothing to send, advance.
     return advanceStatus(data);
   }
   var sendAmount = new BN(adjustInputAmount(anticipated, held));
-
-  var allow = new BN(validation(DOMPurify.sanitize(await tokenErc20.methods.allowance(myaccounts, MAINNET_ADDR.AUTO_BRIDGE).call())));
-  if (allow.lt(sendAmount)) {
-    await sendTx(tokenErc20, 'approve', [MAINNET_ADDR.AUTO_BRIDGE, sendAmount.toFixed(0)], ETH_GAS_APPROVE, '0', false, true, false);
+  if(tokenAddr == MAINNET_ADDR.POL) {
+    await bridgePOL(sendAmount);
+  } else {
+    var allow = new BN(validation(DOMPurify.sanitize(await tokenErc20.methods.allowance(myaccounts, MAINNET_ADDR.AUTO_BRIDGE).call())));
+    if (allow.lt(sendAmount)) {
+      await sendTx(tokenErc20, 'approve', [MAINNET_ADDR.AUTO_BRIDGE, sendAmount.toFixed(0)], ETH_GAS_APPROVE, '0', false, true, false);
+    }
+    await sendTx(bridge, 'bridgeERC20', [tokenAddr, myaccounts, sendAmount.toFixed(0)], ETH_GAS_BRIDGE_ERC, '0', false, true, false);
   }
-  await sendTx(bridge, 'bridgeERC20', [tokenAddr, myaccounts, sendAmount.toFixed(0)], ETH_GAS_BRIDGE_ERC, '0', false, true, false);
-
   // Update the persisted received[which] to what we actually sent so downstream
   // arrival checks compare against the real bridged amount.
   var d = getWizardData();
@@ -1223,13 +1341,11 @@ async function computeTaskDaiAmount(data, status) {
   var polW3 = getPolWeb3Instance();
   var daiPol = new polW3.eth.Contract(WIZ_ERC20_ABI, TREASURY_ADDRESSES.DAI);
   var bal = new BN(validation(DOMPurify.sanitize(await daiPol.methods.balanceOf(myaccounts).call())));
-  if (isLastPolygonTask(data.choices, status)) {
-    // Last task absorbs whatever remains.
-    return bal.toFixed(0);
-  }
   var key = status === 'stable_deposit' ? 'stable' : (status === 'buying_bay' ? 'bay' : 'bayr');
   var target = new BN((data.daiTargets && data.daiTargets[key]) || '0');
-  // Apply 10% input tolerance: ≥90% of target proceeds with what's available.
+  if (isLastPolygonTask(data.choices, status)) {
+    return BN.min(bal, target).toFixed(0);
+  }
   return adjustInputAmount(target, bal);
 }
 
@@ -1310,5 +1426,3 @@ async function stepBuyBayToken(data, isR) {
   );
   return advanceStatus(data);
 }
-
-})();

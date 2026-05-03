@@ -173,12 +173,10 @@
             <img class="swapSelectorLogo uil uil-link" src="./assets/images/buy.png">
             <div class="swapSelectorText">&nbsp&nbsp&nbsp&nbsp&nbspBuy BitBay&nbsp&nbsp&nbsp&nbsp&nbsp</div>
       </div><br>
-      <!--
       <div class=" swapSelector btn login_btn" onclick="launchAutomationWizard()">
             <span class="no-invert">🪄</span>
             <div class="swapSelectorText">&nbspLaunch Wizard&nbsp</div>
       </div>
-      -->
       <!-- ROI Notification for Home Page (shows before login) -->
       <div class="callout callout-success hidden" id="homeRoiNotification" style="margin-top: 10px; text-align: center; font-size: 16px;">
         📈 Calculating ROI...
@@ -809,7 +807,7 @@
                           </select>
                         </div>
                         <div class="swapField" style="display: flex; gap: 10px;">
-                          <button class="swapSelector btn" style="flex: 1;" disabled onclick="depositStableVault()">Deposit</button>
+                          <button class="swapSelector btn" style="flex: 1;" onclick="depositStableVault()">Deposit</button>
                           <button class="swapSelector btn" style="flex: 1;" onclick="collectStableFees()">Collect Fees</button>
                           <button class="swapSelector btn" style="flex: 1;" onclick="withdrawStableVault()">Withdraw</button>
                         </div>
@@ -1204,13 +1202,13 @@
      
      <div style="margin-bottom: 20px;">
        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Polygon Mainnet RPC:</label>
-       <input type="text" id="polygonRpcInput" class="form_field" placeholder="https://polygon.drpc.org/" style="width: 100%; padding: 8px;" />
+       <input type="text" id="polygonRpcInput" class="form_field" placeholder="https://ethereum-rpc.publicnode.com" style="width: 100%; padding: 8px;" />
        <small style="color: #777;">Leave empty to use default RPC endpoints</small>
      </div>
      
      <div style="margin-bottom: 20px;">
        <label style="display: block; margin-bottom: 5px; font-weight: bold;">Ethereum Mainnet RPC:</label>
-       <input type="text" id="ethereumRpcInput" class="form_field" placeholder="https://eth.drpc.org/" style="width: 100%; padding: 8px;" />
+       <input type="text" id="ethereumRpcInput" class="form_field" placeholder="https://ethereum-rpc.publicnode.com" style="width: 100%; padding: 8px;" />
        <small style="color: #777;">Leave empty to use default RPC endpoint</small>
      </div>
      
@@ -1254,18 +1252,19 @@
 <script type="text/javascript" src="./assets/js/bridge-tools/Pair.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/WETH.js"></script>
 
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Treasury.js?v=1"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Vault.js?v=1"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/LidoVault.js?v=1"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVault.js?v=1"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVaultFees.js?v=1"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StakingVote.js?v=1"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/flow.js?v=1"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge.js?v=1"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/earn.js?v=1"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/wizard.js?v=1"></script>
-<script type="text/javascript" src="./rotating-provider.js?v=1"></script>
-<script type="text/javascript" src="./translate.js?v=1"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Treasury.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Vault.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/LidoVault.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVault.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVaultFees.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StakingVote.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/flow.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge-v0.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/earn.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/wizard.js?v=2"></script>
+<script type="text/javascript" src="./rotating-provider.js?v=2"></script>
+<script type="text/javascript" src="./translate.js?v=2"></script>
 
 <style>
   .swal2-header {
@@ -2291,8 +2290,8 @@ var RPC_ENDPOINTS = ["https://polygon.drpc.org/", "https://1rpc.io/matic", "http
 var rotatingProvider = new RotatingProvider(1); //window.RPCState.providers.preferred to follow the limits
 var CUSTOM_POLYGON_RPC = null;
 var CUSTOM_ETHEREUM_RPC = null;
-var DEFAULT_ETHEREUM_RPC = "https://eth.drpc.org/";
-var version = 1;
+var DEFAULT_ETHEREUM_RPC = "https://ethereum-rpc.publicnode.com";//"https://eth.drpc.org/";
+var version = 2;
 (async function checkVersion() {
   const INTERVAL = 10 * 60 * 1000;
   const last = parseInt(localStorage.getItem('lastVersionCheck') || '0', 10);
@@ -3249,11 +3248,17 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
 
     const txReceipt = await txPromise;
     const txHash = validation(DOMPurify.sanitize(txReceipt.transactionHash));
+    console.log("TXID:", txHash);
 
     // Poll for confirmation
     const startTime = Date.now();
     while (true && confCheck) {
-      const receipt = await web3.eth.getTransactionReceipt(txHash);
+      var receipt;
+      try {
+        receipt = await web3.eth.getTransactionReceipt(txHash);
+      } catch (e) {
+        console.log(e);
+      }
       if (receipt) {
         Swal.close();
         // Switch back provider if we switched for loginType 2

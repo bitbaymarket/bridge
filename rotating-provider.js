@@ -75,14 +75,13 @@ var fallbackProvidersDefault = [
     return (
       code === 429 ||
       code === -32005 ||
-      message.includes('rate limit') ||
-      message.includes('too many requests') ||
+      message.includes(' limit') ||
+      message.includes(' requests') ||
       message.includes('throttle') ||
       message.includes('invalid json rpc response') ||
       message.includes('did it run out of gas') ||
       message.includes("returned values aren't valid") ||
       message.includes('is not a function') ||
-      message.includes('exceeded your limit') ||
       message.includes('dialing to the given tcp address timed out') ||
       message.includes('api key disabled') ||
       message.includes('rpc error') ||
