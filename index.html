@@ -3070,7 +3070,9 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
         switchedNetwork = true;
         // Rebuild contract with mmweb3 now on ETH
         mmweb3 = new Web3(window.ethereum);
-        contract = new mmweb3.eth.Contract(contract.options.jsonInterface, contract.options.address);
+        if (contract != "ETH") {
+          contract = new mmweb3.eth.Contract(contract.options.jsonInterface, contract.options.address);
+        }
         await delay(250);
         gasPrice2 = validation(DOMPurify.sanitize(await mmweb3.eth.getGasPrice()));
         gasPrice2 = window.web3.utils.toWei(parseInt(parseInt(gasPrice2) * 1.5).toString(), 'wei');
