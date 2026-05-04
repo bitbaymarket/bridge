@@ -2436,6 +2436,36 @@ window.addEventListener("load", async function() {
       if(netSwitch || loggingIn) {
         return;
       }
+      var mw3 = new Web3(window.ethereum);
+      var chainId = await mw3.eth.net.getId();
+      if(chainId != "11155111" && chainId != "137") {
+        const { isConfirmed } = await Swal.fire({
+            icon: 'warning',
+            title: translateThis('Unsupported network'),
+            text: translateThis('Please switch to the Polygon network to continue.'),
+            showCancelButton: true,
+            confirmButtonText: translateThis('Switch to Polygon'),
+            cancelButtonText: translateThis('Close')
+        });
+        if (isConfirmed) {
+            try {
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: '0x89' }],
+                });
+                await new Promise(r => setTimeout(r, 1000));
+                var chainId2 = await mw3.eth.net.getId();
+                if (chainId2 != "137") {
+                  await Swal.fire(translateThis('Network Switch Required'), translateThis('Polygon was not selected. Please select Polygon within MetaMask to continue.'));
+                }
+            } catch (e) {
+                await Swal.fire(translateThis('Network Switch Required'), translateThis('Unable to switch to Polygon. Please select Polygon within MetaMask to continue.'));
+                location.reload();
+            }
+        } else {
+          location.reload();
+        }
+      }
       defaultvars();
       await login();
     });
@@ -3075,7 +3105,9 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
         switchedNetwork = true;
         // Rebuild contract with mmweb3 now on ETH
         mmweb3 = new Web3(window.ethereum);
-        contract = new mmweb3.eth.Contract(contract.options.jsonInterface, contract.options.address);
+        if (contract != "ETH") {
+          contract = new mmweb3.eth.Contract(contract.options.jsonInterface, contract.options.address);
+        }
         await delay(250);
         gasPrice2 = validation(DOMPurify.sanitize(await mmweb3.eth.getGasPrice()));
         gasPrice2 = window.web3.utils.toWei(parseInt(parseInt(gasPrice2) * 1.5).toString(), 'wei');
@@ -3089,7 +3121,7 @@ async function sendTx(contract, method, args = [], glimit = 2500000, val = "0", 
       if(contract == "ETH") {
         const value = method;       // value in wei
         const to = args[0];         // recipient
-        txPromise = mmweb3.eth.sendTransaction({
+        txPromise = await mmweb3.eth.sendTransaction({
           from: myaccounts,
           to,
           value,
@@ -3474,42 +3506,12 @@ async function checkbalances() {
         }
     }    
     if (netname == "unknown") {
-        // If the user is connected via MetaMask on an unsupported chain, offer
-        // to switch them back to Polygon and verify the switch took effect.
-        if (loginType == 1 && typeof window.ethereum !== 'undefined') {
-            const { isConfirmed } = await Swal.fire({
-                icon: 'warning',
-                title: translateThis('Unsupported network'),
-                text: translateThis('Please switch to the Polygon network to continue.'),
-                showCancelButton: true,
-                confirmButtonText: translateThis('Switch to Polygon'),
-                cancelButtonText: translateThis('Close')
-            });
-            if (isConfirmed) {
-                try {
-                    await window.ethereum.request({
-                        method: 'wallet_switchEthereumChain',
-                        params: [{ chainId: '0x89' }],
-                    });
-                    await new Promise(r => setTimeout(r, 1000));
-                    var chainId2 = await mmweb3.eth.net.getId();
-                    if (chainId2 == "137") {
-                        location.reload();
-                        return;
-                    }
-                    await Swal.fire(translateThis('Network Switch Required'), translateThis('Polygon was not selected. Please select Polygon within MetaMask to continue.'));
-                } catch (e) {
-                    await Swal.fire(translateThis('Network Switch Required'), translateThis('Unable to switch to Polygon. Please select Polygon within MetaMask to continue.'));
-                }
-            }
-        } else {
-            Swal.fire({
-                icon: 'warning',
-                title: translateThis('Error'),
-                text: translateThis('Unsupported network.'),
-                confirmButtonText: translateThis('Close')
-            });
-        }
+        Swal.fire({
+            icon: 'warning',
+            title: translateThis('Error'),
+            text: translateThis('Unsupported network.'),
+            confirmButtonText: translateThis('Close')
+        });
         return;
     }
     gasPrice = "20000000000";
