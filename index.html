@@ -6114,22 +6114,9 @@ async function copyNonce() {
 
 // Polygon bridge endpoints (official, third-party — not BitBay)
 //   POL  -> Plasma deposit manager (depositERC20ForUser)
-//   DAI  -> PoS RootChainManager (depositFor) via the ERC20Predicate proxy
-var POLYGON_BRIDGE = {
-    POL_ROOT:           '0x455e53CBB86018Ac2B8092FdCd39d8444aFFC3F6',
-    DAI_ROOT:           '0x6B175474E89094C44Da98b954EedeAC495271d0F',
-    PLASMA_DEPOSIT_MGR: '0x401F6c983eA34274ec46f84D70b31C151321188b',
-    POS_ROOT_MANAGER:   '0xA0c68C638235ee32657e8f720a23ceC1bFc77C77',
-    POS_ERC20_PREDICATE:'0x40ec5B33f54e0E8A33A975908C5BA1c14e5BbbDf'
-};
+//   DAI  -> BitBay AutoBridge (bridgeERC20)
 var POLYGON_BRIDGE_ABI = [
-    { "inputs":[{"name":"_token","type":"address"},{"name":"_user","type":"address"},{"name":"_amount","type":"uint256"}],"name":"depositERC20ForUser","outputs":[],"stateMutability":"nonpayable","type":"function" },
-    { "inputs":[{"name":"user","type":"address"},{"name":"rootToken","type":"address"},{"name":"depositData","type":"bytes"}],"name":"depositFor","outputs":[],"stateMutability":"nonpayable","type":"function" }
-];
-var POLYGON_BRIDGE_ERC20_ABI = [
-    { "constant":true,"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function" },
-    { "constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function" },
-    { "constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"type":"function" }
+    { "inputs":[{"name":"_token","type":"address"},{"name":"_user","type":"address"},{"name":"_amount","type":"uint256"}],"name":"depositERC20ForUser","outputs":[],"stateMutability":"nonpayable","type":"function" }
 ];
 
 function getBridgeTxidsKey() { return myaccounts + 'bridgetxids'; }
@@ -6162,8 +6149,8 @@ async function BridgeToPolygon() {
     } catch (e) {
         ethW3 = new Web3(getEthereumRpc());
     }
-    var polErc = new ethW3.eth.Contract(POLYGON_BRIDGE_ERC20_ABI, POLYGON_BRIDGE.POL_ROOT);
-    var daiErc = new ethW3.eth.Contract(POLYGON_BRIDGE_ERC20_ABI, POLYGON_BRIDGE.DAI_ROOT);
+    var polErc = new ethW3.eth.Contract(ERC20ABI, MAINNET_ADDR.POL);
+    var daiErc = new ethW3.eth.Contract(ERC20ABI, MAINNET_ADDR.DAI);
     var polBalRaw = '0';
     var daiBalRaw = '0';
     try {
@@ -6175,7 +6162,7 @@ async function BridgeToPolygon() {
     var polBal = stripZeros(new BigNumber(polBalRaw).dividedBy('1e18').toFixed(6));
     var daiBal = stripZeros(new BigNumber(daiBalRaw).dividedBy('1e18').toFixed(6));
 
-    var pickHtml =
+    var bHtml =
         '<p style="text-align:left;">' + translateThis('Select a token to bridge from Ethereum to Polygon and enter an amount.') + '</p>' +
         '<div style="text-align:left;font-size:14px;margin:8px 0;">' +
             '<div><strong>' + translateThis('POL balance') + ':</strong> ' + polBal + '</div>' +
@@ -6191,9 +6178,9 @@ async function BridgeToPolygon() {
             '<p>' + translateThis('Funds can take up to an hour to show on the Polygon side. By proceeding you acknowledge that you understand the risks of using bridges and second-layer networks.') + '</p>' +
         '</div>';
 
-    var pick = await Swal.fire({
+    var result = await Swal.fire({
         title: '🌉 ' + translateThis('Bridge to Polygon'),
-        html: pickHtml,
+        html: bHtml,
         showCancelButton: true,
         confirmButtonText: translateThis('Continue'),
         cancelButtonText: translateThis('Cancel'),
@@ -6215,70 +6202,70 @@ async function BridgeToPolygon() {
             return { token: tokenSel, amount: amtRaw };
         }
     });
-    if (!pick.isConfirmed || !pick.value) return;
+    if (!result.isConfirmed || !result.value) return;
 
-    var token  = pick.value.token;
-    var amount = pick.value.amount;
+    var token  = result.value.token;
+    var amount = result.value.amount;
     var amountWei = new BigNumber(amount).times('1e18').integerValue(BigNumber.ROUND_DOWN).toFixed(0);
 
     var confirmHtml =
         '<p style="text-align:left;">' + translateThis('You are about to bridge') + ' <strong>' + amount + ' ' + token + '</strong> ' + translateThis('from Ethereum to Polygon through the official Polygon bridge contracts.') + '</p>' +
-        '<p style="text-align:left;font-size:13px;">' + translateThis('Funds can take up to an hour to show on the other side. This is the official third-party bridge and is not associated with BitBay — for any questions about the bridge, contact Polygon directly.') + '</p>';
+        '<p style="text-align:left;font-size:13px;">' + translateThis('Funds can take up to an hour to show on the other side. This is the official third-party bridge and is not associated with BitBay — for any questions about the bridge, contact Polygon directly. Please make sure you are aware of the risks and benefits of using bridges and second layer networks.') + '</p>';
     var confirm = await Swal.fire({
         icon: 'question',
         title: translateThis('Confirm bridge'),
         html: confirmHtml,
         showCancelButton: true,
-        confirmButtonText: translateThis('Bridge now'),
+        confirmButtonText: translateThis('I understand'),
         cancelButtonText: translateThis('Cancel')
     });
     if (!confirm.isConfirmed) return;
 
-    // Build contracts on the client web3 — sendTx will wrap them in mmweb3 and
-    // perform the network switch to Ethereum, send the tx, and switch back.
-    var rootToken = token === 'POL' ? POLYGON_BRIDGE.POL_ROOT : POLYGON_BRIDGE.DAI_ROOT;
-    var spender   = token === 'POL' ? POLYGON_BRIDGE.PLASMA_DEPOSIT_MGR : POLYGON_BRIDGE.POS_ERC20_PREDICATE;
-    var bridgeAddr= token === 'POL' ? POLYGON_BRIDGE.PLASMA_DEPOSIT_MGR : POLYGON_BRIDGE.POS_ROOT_MANAGER;
+    var rootToken = token === 'POL' ? MAINNET_ADDR.POL : MAINNET_ADDR.DAI;
+    var spender   = token === 'POL' ? MAINNET_ADDR.PLASMA_DEPOSIT_MANAGER : MAINNET_ADDR.AUTO_BRIDGE;
 
-    var tokenContract  = new web3.eth.Contract(POLYGON_BRIDGE_ERC20_ABI, rootToken);
-    var bridgeContract = new web3.eth.Contract(POLYGON_BRIDGE_ABI, bridgeAddr);
+    var tokenContract     = new web3.eth.Contract(ERC20ABI, rootToken);
+    var bridgeContractPOL = new web3.eth.Contract(POLYGON_BRIDGE_ABI, MAINNET_ADDR.PLASMA_DEPOSIT_MANAGER);
+    var bridgeContractDAI = new web3.eth.Contract(autoBridgev0ABI, MAINNET_ADDR.AUTO_BRIDGE);
 
     try {
-        // Approve the bridge spender if the current allowance is insufficient.
         // Allowance must be read on Ethereum, so we use the read-only ETH web3.
-        var ethTokenRO = new ethW3.eth.Contract(POLYGON_BRIDGE_ERC20_ABI, rootToken);
+        var ethTokenRO = new ethW3.eth.Contract(ERC20ABI, rootToken);
         var allowance  = new BigNumber(validation(DOMPurify.sanitize(await ethTokenRO.methods.allowance(myaccounts, spender).call())));
         if (allowance.lt(amountWei)) {
-            await sendTx(tokenContract, 'approve', [spender, amountWei], 100000, '0', false, true, false);
+            Swal.fire({
+                icon: 'info',
+                title: translateThis('Allowance'),
+                text: translateThis('Authorizing allowance...'),
+                showConfirmButton: false
+            });
+            await sendTx(tokenContract, 'approve', [spender, amountWei], 100000, '0', false, true, true);
         }
-
+        Swal.fire({
+            icon: 'info',
+            title: translateThis('Sending transaction'),
+            text: translateThis('Depositing funds to the Polygon bridge...'),
+            showConfirmButton: false
+        });
         var txid;
         if (token === 'POL') {
-            txid = await sendTx(bridgeContract, 'depositERC20ForUser',
-                [POLYGON_BRIDGE.POL_ROOT, myaccounts, amountWei], 300000, '0', false, true, true);
+            txid = await sendTx(bridgeContractPOL, 'depositERC20ForUser', [MAINNET_ADDR.POL, myaccounts, amountWei], 300000, '0', false, true, true);
         } else {
-            var depositData = web3.eth.abi.encodeParameter('uint256', amountWei);
-            txid = await sendTx(bridgeContract, 'depositFor',
-                [myaccounts, POLYGON_BRIDGE.DAI_ROOT, depositData], 300000, '0', false, true, true);
+            txid = await sendTx(bridgeContractDAI, 'bridgeERC20', [MAINNET_ADDR.DAI, myaccounts, amountWei], 300000, '0', false, true, true);
         }
-
+        txid = validation(DOMPurify.sanitize(txid));
         if (txid && typeof txid === 'string' && txid.length > 0 && txid !== 'Transaction submitted') {
-            saveBridgeTxid({
-                token: token,
-                amount: amount,
-                txid: txid,
-                time: Date.now()
-            });
+            saveBridgeTxid({ token: token, amount: amount, txid: txid, time: Date.now() });
         }
 
-        var doneHtml =
+        var theHtml =
             '<p>' + translateThis('Your transaction has been routed through the official Polygon bridge contracts.') + '</p>' +
-            (txid ? '<p style="font-size:13px;word-break:break-all;"><strong>TXID:</strong> <code>' + DOMPurify.sanitize(String(txid)) + '</code></p>' : '') +
+            (txid ? '<p style="font-size:13px;word-break:break-all;"><strong>TXID:</strong> <code>' + txid + '</code></p>' : '') +
             '<p style="font-size:13px;">' + translateThis('You can confirm your transaction using the transaction ID. Funds may take up to an hour to show on the Polygon side.') + '</p>';
         await Swal.fire({
             icon: 'success',
             title: translateThis('Bridge submitted'),
-            html: doneHtml,
+            html: theHtml,
             confirmButtonText: translateThis('Close')
         });
     } catch (e) {
@@ -6298,9 +6285,9 @@ async function showBridgeHistory() {
         var rows = list.map(function(e) {
             var when = '';
             try { when = new Date(e.time).toLocaleString(); } catch (err) { when = ''; }
-            var safeTxid   = DOMPurify.sanitize(String(e.txid || ''));
-            var safeToken  = DOMPurify.sanitize(String(e.token || ''));
-            var safeAmount = DOMPurify.sanitize(String(e.amount || ''));
+            var safeTxid   = validation(DOMPurify.sanitize(String(e.txid || '')));
+            var safeToken  = validation(DOMPurify.sanitize(String(e.token || '')));
+            var safeAmount = validation(DOMPurify.sanitize(String(e.amount || '')));
             return '<div style="border-bottom:1px dashed #ccc;padding:6px 0;">' +
                        '<div><strong>' + safeAmount + ' ' + safeToken + '</strong>' + (when ? ' &mdash; <span style="color:#666;">' + when + '</span>' : '') + '</div>' +
                        '<div style="font-family:monospace;font-size:12px;word-break:break-all;">' + safeTxid + '</div>' +
