@@ -631,13 +631,13 @@
     </div>
 
     <div class="swapFields polygon-bridge-section logged-in" style="margin-top: 20px;">
-        <div class="boxTitle swapFirstCoinTxt">
+        <div class="boxTitle swapFirstCoinTxt" style="margin-bottom: 10px;">
           <span class="no-invert">🌉</span>&nbsp;Polygon Bridge
         </div>
-        <div class="callout">
+        <div class="callout" style="margin-bottom: 12px; padding: 0.75rem;">
           Here you can send altcoins from Ethereum to Polygon.
         </div>
-        <div class="swapField">
+        <div class="swapField" style="gap: 10px;">
           <div class="swapSelector btn" onclick="BridgeToPolygon()">
             <img class="swapSelectorLogo" src="./assets/images/polygon.svg" style="width: 24px; height: 24px;">
             <div class="swapSelectorText">Bridge to Polygon</div>
@@ -1736,23 +1736,6 @@
   }
   .swal2-content {
     color: #3d0064; /* Content text color */
-  }
-  /* Restore paragraph spacing inside Swal — global `p { margin: 0 }` in style.css
-     would otherwise squash multi-paragraph dialog content. */
-  .swal2-html-container p,
-  .swal2-content p {
-    margin: 0 0 0.8em;
-    line-height: 1.45;
-  }
-  .swal2-html-container p:last-child,
-  .swal2-content p:last-child {
-    margin-bottom: 0;
-  }
-  .swal2-html-container br,
-  .swal2-content br {
-    display: block;
-    content: "";
-    margin-top: 0.4em;
   }
   .swal2-confirm,
   .swal2-cancel {
