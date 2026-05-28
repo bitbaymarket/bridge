@@ -1988,7 +1988,7 @@ async function collectStableFees() {
     const feeVault = validation(DOMPurify.sanitize(await stableContract.methods.feeVault().call()));
     const feeVaultContract = new earnState.polWeb3.eth.Contract(stableVaultFeesABI, feeVault);
     
-    await sendTx(feeVaultContract, "claim", [], 500000, "0", true, false);
+    await sendTx(feeVaultContract, "claim", [], 2000000, "0", true, false);
     
     hideSpinner();
     await Swal.fire(translateThis('Success'), translateThis('Fees collected!'), 'success');
@@ -2645,7 +2645,7 @@ async function checkAndManageStableVault() {
           // Collect once per day
           if (now - lastFeeCollection > 86400) {
             logToConsole('Collecting personal fees from StableVault (donating user)');
-            const tx = await sendTx(feeVaultContract, "claim", [], 500000, "0", false, false, false);            
+            const tx = await sendTx(feeVaultContract, "claim", [], 2000000, "0", false, false, false);            
             localStorage.setItem(myaccounts+'stableFeeLastCollection', now.toString());
             logToConsole(`Personal fees collected $${stripZeros(totalPendingUSD.toFixed(8, BN.ROUND_DOWN))}: ` + tx);
           }
