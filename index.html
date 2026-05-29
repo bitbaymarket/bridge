@@ -1276,19 +1276,19 @@
 <script type="text/javascript" src="./assets/js/bridge-tools/Pair.js"></script>
 <script type="text/javascript" src="./assets/js/bridge-tools/WETH.js"></script>
 
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Treasury.js?v=2"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Vault.js?v=2"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/LidoVault.js?v=2"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVault.js?v=2"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVaultFees.js?v=2"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StakingVote.js?v=2"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/flow.js?v=2"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge.js?v=2"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge-v0.js?v=2"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/earn.js?v=2a"></script>
-<script type="text/javascript" src="./assets/js/bridge-tools/wizard.js?v=2"></script>
-<script type="text/javascript" src="./rotating-provider.js?v=2"></script>
-<script type="text/javascript" src="./translate.js?v=2"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Treasury.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/Vault.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/LidoVault.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVault.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StableVaultFees.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/StakingVote.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/flow.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/treasury/autoBridge-v0.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/earn.js?v=3"></script>
+<script type="text/javascript" src="./assets/js/bridge-tools/wizard.js?v=3"></script>
+<script type="text/javascript" src="./rotating-provider.js?v=3"></script>
+<script type="text/javascript" src="./translate.js?v=3"></script>
 
 <style>
   .swal2-header {
@@ -1863,6 +1863,10 @@ function uniswapBtnClicked() {
     }
 }
 
+if (typeof BigNumber !== 'undefined' && BigNumber.config) {
+  BigNumber.config({ EXPONENTIAL_AT: 1e9 });
+}
+
 function centerPopup() {
     const popup = Swal.getPopup();
     if (!popup) return;
@@ -2333,8 +2337,20 @@ var version = 2;
       const remoteVersion = parseInt((await res.text()).trim(), 10);
       if (!isNaN(remoteVersion) && remoteVersion > version) {
         localStorage.setItem('lastVersionCheck', Date.now());
-        setTimeout(() => window.location.reload(), 500);
-        return;
+        const result = await Swal.fire({
+          title: translateThis('Update Available'),
+          text: translateThis('A new version of the site is available. To implement the updates this page must be refreshed. Some users may choose to review the source code first before proceeding. Would you like to refresh now?'),
+          icon: 'info',
+          showCancelButton: true,
+          confirmButtonText: 'Refresh',
+          cancelButtonText: 'Later'
+        });
+        if (result.isConfirmed) {
+          window.location.reload();
+          return;
+        } else {
+          return;
+        }
       }
     }
   } catch (e) {}
@@ -5621,7 +5637,7 @@ async function sendBase() {
     if (!confirm.isConfirmed) return;
     try {
       showSpinner();
-      await sendTx("ETH",amountBN.toString(),[addy],1000000);
+      await sendTx("ETH",amountBN.toFixed(0),[addy],1000000);
       hideSpinner();
       Swal.fire(translateThis('Success'), translateThis('Transfer complete.'), 'success');
       checkbalances();
@@ -5760,7 +5776,7 @@ async function showPegChart(selectedChart = 0) {
                 }
                 if (iters >= min && iters <= max) {
                     const val = new BigNumber(result[parseInt(result2[1]) + y]);
-                    data.push(val.toString());
+                    data.push(val.toFixed(0));
                     iters2 += 1;
                 }
             } else {
@@ -5769,7 +5785,7 @@ async function showPegChart(selectedChart = 0) {
                         tot2 = new BigNumber(0);
                     }
                     if (iters >= min && iters <= max) {
-                        data.push(tot2.toString());
+                        data.push(tot2.toFixed(0));
                         iters2 += 1;
                     }
                 } else {
@@ -5778,7 +5794,7 @@ async function showPegChart(selectedChart = 0) {
                         tot = new BigNumber(0);
                     }
                     if (iters >= min && iters <= max) {
-                        data.push(tot.toString());
+                        data.push(tot.toFixed(0));
                         iters2 += 1;
                     }
                 }
@@ -5967,7 +5983,7 @@ async function burnToBitBay(burnamount) {
         return;
     }
     var orgamount = burnamount;
-    burnamount = new BN(web3.utils.toWei(burnamount, 'gwei')).div(10).toString();
+    burnamount = new BN(web3.utils.toWei(burnamount, 'gwei')).div(10).toFixed(0);
     var myvar = document.getElementById("coinToBurn").value;
     var selectedaccount = myaccounts;
     var myadmin = "";
@@ -6979,7 +6995,7 @@ async function Swap() {
       } else {
           swapval = new BN(swapval.toString()).times(new BN('100000000'));
       }
-      swapval = swapval.toString();
+      swapval = swapval.toFixed(0);
       lastMinMax2 = lastMinMax.toString();
       console.log(mypair);
       console.log(swapval);

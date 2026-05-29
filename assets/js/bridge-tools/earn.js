@@ -780,7 +780,7 @@ async function loadLidoVaultInfo() {
     // Get total principal and yield
     const totalPrincipal = validation(DOMPurify.sanitize(await lidoContract.methods.totalPrincipal().call()));
     var totalYield = validation(DOMPurify.sanitize(await lidoContract.methods.totalYield().call()));
-    totalYield = (new BN(validation(DOMPurify.sanitize(await lidoContract.methods.availableYield().call()))).plus(new BN(totalYield))).toString();
+    totalYield = (new BN(validation(DOMPurify.sanitize(await lidoContract.methods.availableYield().call()))).plus(new BN(totalYield))).toFixed(0);
     
     // Convert from wei to ETH using BigNumber
     const principalETH = formatETHAmount(totalPrincipal, 8);
@@ -1942,8 +1942,8 @@ async function checkPoolHealth() {
     // 3. Calculate the 98% threshold
     // If Assets < (Shares * 0.98), the pool is underwater by > 2%
     const threshold = totalShares.times(0.98);
-    console.log(threshold.toString());
-    console.log(totalAssets.toString());
+    console.log(threshold.toFixed(0));
+    console.log(totalAssets.toFixed(0));
 
     if (totalAssets.lt(threshold)) {
       // Calculate current health percentage for display
@@ -2053,7 +2053,7 @@ async function withdrawStableVault() {
     if (PoolUsdcBal.gt(new BN('2000000')) || PoolDaiBal.gt(new BN('2000000000000000000'))) {
       addDust = true;
     }
-    await sendTx(stableContract, "withdraw", [withdrawShares.toString(), deadline, addDust], 1000000, "0", true, false);    
+    await sendTx(stableContract, "withdraw", [withdrawShares.toFixed(0), deadline, addDust], 1000000, "0", true, false);    
     hideSpinner();
     await Swal.fire(translateThis('Success'), translateThis('Withdrawal successful!'), 'success');
     await refreshStableVaultInfo();
@@ -2926,7 +2926,7 @@ async function depositStake() {
   }
   try {
     showSpinner();
-    amount = new BN(amount).times('1e8').toString();
+    amount = new BN(amount).times('1e8').toFixed(0);
     const vaultContract = new earnState.polWeb3.eth.Contract(vaultABI, TREASURY_ADDRESSES.VAULT);
     const baylTreasury = new earnState.polWeb3.eth.Contract(treasuryABI, TREASURY_ADDRESSES.BAYL_TREASURY);
     // Check if this is first deposit - if so, set coins first
@@ -3057,7 +3057,7 @@ async function unstakeBAYL() {
       if (!value || new BN(value).lte(new BN('0'))) {
         return translateThis('Please enter a valid amount');
       }
-      const amountWei = BN(value).times('1e8').toString();
+      const amountWei = BN(value).times('1e8').toFixed(0);
       if (new BN(amountWei).gt(new BN(vaultTokenBalance))) {
         return translateThis('Insufficient balance in vault. Maximum available') + ': ' + vaultTokenBalanceFormatted;
       }
@@ -3066,7 +3066,7 @@ async function unstakeBAYL() {
   if (!result.isConfirmed) return;
   try {
     showSpinner();
-    const amount = BN(result.value).times('1e8').toString();
+    const amount = BN(result.value).times('1e8').toFixed(0);
     if (isBAYL) {
       await sendTx(vaultContract, "withdrawLiquid", [amount], 1500000, "0", true, false);
     } else {
@@ -3161,7 +3161,7 @@ async function claimStakingRewards(showSwal = false) {
         } else {
           amount = new BN(pending).dividedBy('1e18');
         }
-        earnState.userTotalRewards[coinName] = new BN(earnState.userTotalRewards[coinName] || 0).plus(amount).toString();
+        earnState.userTotalRewards[coinName] = new BN(earnState.userTotalRewards[coinName] || 0).plus(amount).toFixed(0);
       }
     }
     var tx;
@@ -3970,7 +3970,7 @@ async function executeWithdrawal(withdrawData) {
           throw new Error('Insufficient balance to cover gas fees');
         }
       }
-      await sendTx("ETH",amountWei.toString(),[address],150000,"0",true);
+      await sendTx("ETH",amountWei.toFixed(0),[address],150000,"0",true);
     } else if (coin.coin === 'ETH') {
       // Withdraw ETH
       let amountWei;
@@ -3986,7 +3986,7 @@ async function executeWithdrawal(withdrawData) {
           throw new Error('Insufficient balance to cover gas fees');
         }
       }
-      await sendTx("ETH",amountWei.toString(),[address],150000,"0",true,true);
+      await sendTx("ETH",amountWei.toFixed(0),[address],150000,"0",true,true);
     } else {
       // Withdraw ERC20 token
       let tokenAddress, decimals, web3Instance;
