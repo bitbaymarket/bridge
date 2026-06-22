@@ -2376,9 +2376,10 @@ function loadRpcSettings() {
   }
 }
 
+//You can get live node statistics from: https://chainlist.org/
 function getPolygonRpc() {
   if (currentChainId === "11155111") {
-    return "https://eth-sepolia.public.blastapi.io";
+    return "https://ethereum-sepolia-rpc.publicnode.com";//"https://eth-sepolia.public.blastapi.io";
   }
   if (currentRpcIndex == 999) {
     return rotatingProvider;
@@ -2388,7 +2389,7 @@ function getPolygonRpc() {
 
 function getEthereumRpc() {
   if (currentChainId === "11155111") {
-    return DEFAULT_ETHEREUM_RPC;
+    return "https://ethereum-sepolia-rpc.publicnode.com";
   }
   return CUSTOM_ETHEREUM_RPC || DEFAULT_ETHEREUM_RPC;
 }
@@ -2454,7 +2455,7 @@ window.addEventListener("load", async function() {
       }
       var mw3 = new Web3(window.ethereum);
       var chainId = await mw3.eth.net.getId();
-      if(chainId != "11155111" && chainId != "137") {
+      if(chainId != "137") {
         const { isConfirmed } = await Swal.fire({
             icon: 'warning',
             title: translateThis('Unsupported network'),
@@ -2636,6 +2637,10 @@ async function login() {
             modalDialog(translateThis('Connect'), translateThis("Please unlock Metamask so it can connect."), "warning");
             return;
         }
+        if (chainId2 == "11155111") {
+          await Swal.fire(translateThis("Testnet disabled."), translateThis("Test network is currently not enabled. Please select Polygon network within MetaMask in order to connect."));
+          return false;
+        }
         myaccounts = validation(DOMPurify.sanitize(myaccounts2[0]));
         // Always prompt for signature - no stored credentials
         console.log("Requesting signature for", myaccounts);
@@ -2645,7 +2650,7 @@ async function login() {
         });
         var chainId2 = await mmweb3.eth.net.getId();
         if (chainId2 == "11155111") {
-          web3 = new Web3("https://eth-sepolia.public.blastapi.io");
+          web3 = new Web3("https://ethereum-sepolia-rpc.publicnode.com");
         } else if (chainId2 == "137") {
           currentRpcIndex = 1;
           web3 = new Web3(getPolygonRpc());
@@ -2684,7 +2689,6 @@ async function login() {
           html:`
               <select id="network" class="swal2-select">
                   <option value="0" selected>Polygon</option>
-                  <option value="1">Sepolia Testnet</option>
               </select>
               <input type="password" id="password" class="swal2-input" placeholder="${translateThis('Enter Password')}">
               <input type="password" id="confirmPassword" class="swal2-input" placeholder="${translateThis('Confirm Password')}">
@@ -2816,7 +2820,7 @@ async function login() {
                   web3 = new Web3(getPolygonRpc());
                   //web3 = new Web3("https://polygon-mainnet.public.blastapi.io");
               } else {
-                  web3 = new Web3("https://eth-sepolia.public.blastapi.io");
+                  web3 = new Web3("https://ethereum-sepolia-rpc.publicnode.com");
               }
               myaccounts = await web3.eth.accounts.privateKeyToAccount(accountprivkey);
               const wallet = web3.eth.accounts.wallet;
